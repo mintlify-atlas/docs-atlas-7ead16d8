@@ -1,7 +1,7 @@
 ---
 title: "Rokid Glasses Hardware Setup and ADB Configuration"
 sidebarTitle: "Hardware Setup"
-description: "Source Rokid Glasses and the dev cable, connect via ADB, configure Wi-Fi for wireless debugging, and set up a phone or emulator for testing without hardware."
+description: "Source Rokid Glasses and the dev cable, connect via ADB, configure Wi-Fi for wireless debugging, and set up a phone or emulator for testing."
 ---
 
 Rokid Glasses are Android-based smart glasses with an outward-facing camera, a monochrome HUD, microphones, speakers, and a temple touchpad — and no touchscreen. This page covers where to get the hardware, how to connect via ADB for development, how to configure Wi-Fi for wireless debugging, common build and install commands, and how to set up a phone or emulator when you want to test without the glasses in hand.
@@ -163,32 +163,20 @@ The Rokid Hello World starter app includes a viewport wrapper and touchpad navig
 
 ### Emulator Setup
 
-<Steps>
-  <Step title="Set environment variables">
-    These variables configure the AVD name, Android API level, ABI for your machine architecture, system image, and device profile:
+Run this script to install a system image, create an AVD, and launch the emulator. It auto-detects your machine architecture for the correct ABI, routes audio through your machine, and maps your webcam as the back camera:
 
-    ```sh
-    AVD=Test
-    API=36
-    ABI=$([ "$(uname -m)" = "arm64" ] && echo "arm64-v8a" || echo "x86_64")
-    IMG="system-images;android-$API;google_apis;$ABI"
-    DEVICE=pixel_9a
-    ```
-  </Step>
-  <Step title="Install the system image and create the AVD">
-    ```sh
-    sdkmanager "$IMG"
-    echo no | avdmanager create avd -n "$AVD" -k "$IMG" --device "$DEVICE"
-    ```
-  </Step>
-  <Step title="Launch the emulator">
-    Pass `-allow-host-audio` to route audio through your machine and `-camera-back webcam0` to use your webcam as the back camera:
+```sh
+AVD=Test
+API=36
+ABI=$([ "$(uname -m)" = "arm64" ] && echo "arm64-v8a" || echo "x86_64")
+IMG="system-images;android-$API;google_apis;$ABI"
+DEVICE=pixel_9a
 
-    ```sh
-    emulator @"$AVD" -allow-host-audio -camera-back webcam0
-    ```
-  </Step>
-</Steps>
+sdkmanager "$IMG"
+echo no | avdmanager create avd -n "$AVD" -k "$IMG" --device "$DEVICE"
+
+emulator @"$AVD" -allow-host-audio -camera-back webcam0
+```
 
 <Tip>
   `sdkmanager` and `avdmanager` are included with Android Studio's SDK tools. If the commands are not found, add the Android SDK's `cmdline-tools/latest/bin` directory to your `PATH`.

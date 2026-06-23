@@ -1,7 +1,7 @@
 ---
-title: "GlassKit Agent Skill for AI Coding Agents"
+title: "GlassKit Agent Skill for Smart Glasses Development"
 sidebarTitle: "Agent Skill"
-description: "Install the GlassKit skill so Codex, Claude Code, Cursor, or any Agent Skills–compatible agent understands Rokid Glasses constraints and patterns from the first prompt."
+description: "Install the GlassKit skill so Codex, Claude Code, or Cursor understands Rokid Glasses constraints, patterns, and starter templates from the first prompt."
 ---
 
 The GlassKit agent skill packages smart-glasses context — device constraints, reference patterns, and a starter template — into a format that AI coding agents can read and act on. This page explains what the skill contains, why it matters for glasses development, which agents support it, how to install and update it, and example prompts to get started.
@@ -48,13 +48,13 @@ npx skills update glasskit
 After installation the agent can read three things:
 
 <CardGroup cols={3}>
-  <Card title="SKILL.md" icon="book">
+  <Card title="SKILL.md" icon="book" href="/guides/agent-skill#what-the-skill-includes">
     Top-level orientation: Rokid hardware basics, display and input constraints, workflow steps, and a reference index. The agent reads this first.
   </Card>
-  <Card title="references/" icon="file-code">
+  <Card title="references/" icon="file-code" href="/guides/agent-skill#what-the-skill-includes">
     Detailed reference docs covering Rokid setup, inputs, voice commands, WebRTC, proactive perception, OpenAI Realtime, and object detection.
   </Card>
-  <Card title="assets/rokid-hello-world/" icon="rocket">
+  <Card title="assets/rokid-hello-world/" icon="rocket" href="/quickstart">
     A minimal Rokid Glasses starter app the agent can copy into your workspace as a scaffold. Includes HUD layout and touchpad navigation patterns.
   </Card>
 </CardGroup>

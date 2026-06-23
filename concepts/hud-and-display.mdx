@@ -1,5 +1,5 @@
 ---
-title: "Rokid HUD & Display: Specs, Layouts, and Patterns"
+title: "Rokid HUD Display: Specs, ScreenController, and Layouts"
 sidebarTitle: "HUD & Display"
 description: "Learn Rokid Glasses HUD specifications, the ScreenController lifecycle pattern, HudViewportLayout scaling, and best practices for readable on-lens UI."
 ---
@@ -218,9 +218,17 @@ class HudViewportLayout @JvmOverloads constructor(
         }
     }
 
-    private fun designWidthPx() = dpToPx(HUD_DESIGN_WIDTH_DP)
-    private fun designHeightPx() = dpToPx(HUD_DESIGN_HEIGHT_DP)
-    private fun dpToPx(dp: Float) = (dp * resources.displayMetrics.density).roundToInt()
+    private fun designWidthPx(): Int {
+        return dpToPx(HUD_DESIGN_WIDTH_DP)
+    }
+
+    private fun designHeightPx(): Int {
+        return dpToPx(HUD_DESIGN_HEIGHT_DP)
+    }
+
+    private fun dpToPx(dp: Float): Int {
+        return (dp * resources.displayMetrics.density).roundToInt()
+    }
 }
 ```
 
@@ -236,6 +244,14 @@ companion object {
     private const val HUD_REFERENCE_HEIGHT_PX = 640f
     private const val HUD_REFERENCE_DENSITY_DPI = 240f
     private const val HUD_ASPECT_RATIO = HUD_REFERENCE_WIDTH_PX / HUD_REFERENCE_HEIGHT_PX
+}
+
+private fun designWidthPx(): Int {
+    return referencePixelsToCurrentPixels(HUD_REFERENCE_WIDTH_PX).roundToInt()
+}
+
+private fun designHeightPx(): Int {
+    return referencePixelsToCurrentPixels(HUD_REFERENCE_HEIGHT_PX).roundToInt()
 }
 
 private fun referencePixelsToCurrentPixels(referencePixels: Float): Float {
@@ -274,20 +290,13 @@ Screens are independent objects, not Android Fragments. The hosting Activity hol
 
 ## HUD UI Best Practices
 
-<CardGroup cols={2}>
-  <Card title="Text Size" icon="text-size">
-    Use at minimum 14 sp for body text. The HUD sits in the wearer's peripheral vision while they work; text that looks fine on a phone preview can be unreadable at a glance.
-  </Card>
-  <Card title="Contrast" icon="circle-half-stroke">
-    Always use white (`#FFFFFF`) foreground on black (`#000000`) background. Gray text reduces brightness on the green display. Avoid colored backgrounds — they become unpredictable shades of green.
-  </Card>
-  <Card title="Content Density" icon="layout">
-    Show only what the wearer needs right now. A maximum of three to five lines of text per screen avoids cognitive overload. Use short words and sentence fragments.
-  </Card>
-  <Card title="Navigation Hints" icon="hand-pointer">
-    Always display available touchpad actions at the bottom of the screen. The wearer cannot see a physical keyboard or button labels.
-  </Card>
-</CardGroup>
+**Text size** — Use at minimum 14 sp for body text. The HUD sits in the wearer's peripheral vision while they work; text that looks fine on a phone preview can be unreadable at a glance.
+
+**Contrast** — Always use white (`#FFFFFF`) foreground on black (`#000000`) background. Gray text reduces brightness on the green display. Avoid colored backgrounds — they become unpredictable shades of green.
+
+**Content density** — Show only what the wearer needs right now. A maximum of three to five lines of text per screen avoids cognitive overload. Use short words and sentence fragments.
+
+**Navigation hints** — Always display available touchpad actions at the bottom of the screen. The wearer cannot see a physical keyboard or button labels.
 
 <Note>
   When testing on a phone or emulator, the white-on-black color scheme will look stark. This is correct. The on-device experience is green-on-transparent, which appears natural in the wearer's field of view.

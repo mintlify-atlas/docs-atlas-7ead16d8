@@ -1,5 +1,5 @@
 ---
-title: "GlassKit App Architecture: Four-Layer Design"
+title: "GlassKit Application Architecture: Four-Layer Design"
 sidebarTitle: "Architecture"
 description: "Understand how GlassKit apps are structured across the Rokid Android layer, WebRTC transport, backend services, and wearer feedback."
 ---
@@ -9,16 +9,16 @@ Every GlassKit app is organized around four cooperating layers: the Rokid Glasse
 ## The Four Layers
 
 <CardGroup cols={2}>
-  <Card title="Rokid Glasses (Android)" icon="glasses">
+  <Card title="Rokid Glasses (Android)" icon="glasses" href="/concepts/inputs">
     Captures camera frames and microphone audio, handles touchpad gestures, and renders the monochrome HUD.
   </Card>
-  <Card title="WebRTC Transport" icon="signal-stream">
+  <Card title="WebRTC Transport" icon="signal-stream" href="/concepts/webrtc-streaming">
     Carries live media between the glasses, your backend, and upstream AI services over a peer-to-peer or relayed connection.
   </Card>
-  <Card title="Backend" icon="server">
+  <Card title="Backend" icon="server" href="/guides/proactive-perception">
     Coordinates session setup, workflow state, model calls, tool calls, and app-specific decisions.
   </Card>
-  <Card title="Wearer Feedback" icon="eye">
+  <Card title="Wearer Feedback" icon="eye" href="/concepts/hud-and-display">
     Delivers real-time guidance via the HUD display, speakers, or data-channel events driving UI updates.
   </Card>
 </CardGroup>
@@ -52,7 +52,7 @@ Two integration shapes are common:
   <Tab title="Backend Media Receiver">
     Android sends an SDP offer directly to your Python or Node backend. The backend terminates the WebRTC connection, receives the video and audio tracks, runs inference or processing on them, and sends results back on a data channel.
 
-    ```
+    ```text
     Glasses ──SDP offer──► Backend (aiortc)
             ◄─SDP answer──
             ══video/audio═►
@@ -62,7 +62,7 @@ Two integration shapes are common:
   <Tab title="Backend Service Broker">
     Android sends an SDP offer to your backend. The backend forwards it (or adapts it) to an upstream provider like OpenAI Realtime, then relays the provider's answer SDP back to Android. The backend also bridges control events between Android and the provider.
 
-    ```
+    ```text
     Glasses ──SDP offer──► Backend ──session create──► Provider
             ◄─SDP answer──         ◄─answer SDP──────
             ══video/audio════════════════════════════►
@@ -126,10 +126,10 @@ The wearer interacts back through touchpad gestures or microphone input, which f
 Not every feature requires a live backend connection. Some pieces can run fully on the device:
 
 <CardGroup cols={2}>
-  <Card title="Vosk Voice Commands" icon="microphone">
+  <Card title="Vosk Voice Commands" icon="microphone" href="/guides/voice-commands">
     Offline speech recognition for short command words (start, stop, confirm). Useful as a fallback when Wi-Fi is unavailable or as a complement to touchpad navigation.
   </Card>
-  <Card title="Local Vision / Privacy Processing" icon="shield">
+  <Card title="Local Vision / Privacy Processing" icon="shield" href="/guides/object-detection">
     CameraX frames can be processed on-device for privacy filtering or simple CV tasks before streaming, so sensitive data never leaves the glasses.
   </Card>
 </CardGroup>

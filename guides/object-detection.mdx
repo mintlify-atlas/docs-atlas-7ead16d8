@@ -1,7 +1,7 @@
 ---
-title: "Object Detection with RF-DETR on Rokid Glasses"
+title: "Object Detection with RF-DETR on Rokid Glasses Apps"
 sidebarTitle: "Object Detection"
-description: "Stream Rokid camera video to a backend detector, normalize results into typed events, apply confirmation rules, and optionally augment a realtime model with annotated frames."
+description: "Stream Rokid camera to a backend detector, normalize detections into typed events, apply confirmation rules, and augment realtime models with frames."
 ---
 
 Object detection on Rokid Glasses is most useful when your app needs deterministic visual signals from the outward camera — object presence, class labels, bounding boxes, counters, completion triggers, or annotated frames for realtime model augmentation. This page covers the full pipeline: Android stream setup, backend receiver, frame policy, normalized results, decision logic, event contracts, annotated frames, and model augmentation.
@@ -52,7 +52,7 @@ If the requested capture mode is not supported by the camera HAL, start with a s
 
 Use `aiortc` for WebRTC termination in Python rather than hand-rolling SDP or media parsing. Keep the receiver thin: accept the media stream, hand frames to a vision processor, and publish normalized app events.
 
-```
+```text
 Receiver responsibilities:
   - Accept WebRTC offer, negotiate codec (prefer H264 for Rokid)
   - Hand decoded frames to the vision processor queue
@@ -71,13 +71,13 @@ Keep session lifecycle, cleanup, and state broadcasting outside the detector mod
 Object detection should optimize freshness, not throughput. A camera-glasses app that reacts to stale frames feels wrong even when inference is accurate.
 
 <CardGroup cols={3}>
-  <Card title="Latest-Frame Buffer" icon="layer-group">
+  <Card title="Latest-Frame Buffer" icon="layer-group" href="/guides/object-detection#frame-policy">
     Keep only the newest frame while inference runs. Works well when the model is slower than the camera stream.
   </Card>
-  <Card title="Minimum Interval" icon="clock">
+  <Card title="Minimum Interval" icon="clock" href="/guides/object-detection#frame-policy">
     Skip frames until `now - last_processed >= min_interval_s`. Simple and works well for image augmentation.
   </Card>
-  <Card title="One In-Flight" icon="bolt">
+  <Card title="One In-Flight" icon="bolt" href="/guides/object-detection#frame-policy">
     If a frame is being processed, drop incoming frames instead of building a queue. Prevents memory and latency spikes.
   </Card>
 </CardGroup>
@@ -117,13 +117,13 @@ Keep these rules when building your normalization layer:
 ## Model Backend Choices
 
 <CardGroup cols={3}>
-  <Card title="Fine-Tuned Detector" icon="crosshairs">
+  <Card title="Fine-Tuned Detector" icon="crosshairs" href="/examples/rokid-rfdetr">
     Best for a known set of physical objects, parts, states, or completion markers. RF-DETR is a good concrete example.
   </Card>
-  <Card title="Open-Vocabulary Detector" icon="magnifying-glass">
+  <Card title="Open-Vocabulary Detector" icon="magnifying-glass" href="/guides/object-detection#model-backend-choices">
     Useful during prototyping. Stabilize labels before wiring completion rules to them.
   </Card>
-  <Card title="Hosted Detector Service" icon="cloud">
+  <Card title="Hosted Detector Service" icon="cloud" href="/guides/object-detection#model-backend-choices">
     Fastest to prototype. Normalize results and hide vendor auth from Android.
   </Card>
 </CardGroup>

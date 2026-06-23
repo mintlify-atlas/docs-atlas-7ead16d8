@@ -1,5 +1,5 @@
 ---
-title: "Rokid Inputs: Touchpad, Camera, and Microphone"
+title: "Rokid Glasses Inputs: Touchpad, Camera, and Microphone"
 sidebarTitle: "Inputs"
 description: "Configure Rokid Glasses touchpad gestures, CameraX back-camera binding at 1024×768, and AudioRecord microphone capture for streaming or local processing."
 ---
@@ -296,16 +296,16 @@ Pass the resulting module to `PeerConnectionFactory.builder().setAudioDeviceModu
 ## Input Summary
 
 <CardGroup cols={2}>
-  <Card title="Touchpad" icon="hand-pointer">
+  <Card title="Touchpad" icon="hand-pointer" href="/concepts/inputs">
     Four gestures only. Use `NavigationInputMapper` to handle both Rokid key events and phone/emulator touch events with the same callbacks. Double-tap routes through `OnBackPressedCallback`.
   </Card>
-  <Card title="Camera" icon="camera">
+  <Card title="Camera" icon="camera" href="/concepts/inputs">
     CameraX with Application-level back-camera limiter. Request 1024×768 @ 15 fps, set target rotation, and unbind when not visible. Do not request sub-15 fps from the HAL.
   </Card>
-  <Card title="Microphone (PCM)" icon="microphone">
+  <Card title="Microphone (PCM)" icon="microphone" href="/concepts/inputs">
     `AudioRecord` with 16 kHz, mono, PCM16. Check `STATE_INITIALIZED` and `RECORDSTATE_RECORDING` before trusting the recorder. Read on a background thread at `THREAD_PRIORITY_AUDIO`.
   </Card>
-  <Card title="Microphone (WebRTC)" icon="signal-stream">
+  <Card title="Microphone (WebRTC)" icon="signal-stream" href="/concepts/webrtc-streaming">
     `JavaAudioDeviceModule` with `USAGE_MEDIA`, hardware AEC/NS disabled, 16 kHz mono. Pass to `PeerConnectionFactory` so WebRTC owns the audio device lifecycle.
   </Card>
 </CardGroup>

@@ -1,7 +1,7 @@
 ---
-title: "Proactive Perception Pattern for Glasses Apps"
+title: "Proactive Perception Pattern for Smart Glasses Apps"
 sidebarTitle: "Proactive Apps"
-description: "Build continuous-observation glasses apps that react to what the wearer sees without requiring explicit commands, using stabilization rules and backend workflow authority."
+description: "Build glasses apps that continuously observe real-world context and react without explicit commands, using stabilization rules and backend authority."
 ---
 
 Proactive glasses apps continuously observe real-world context and react when something meaningful changes — they are not chat flows waiting for user prompts. This page explains the core loop, perception providers, observation contract, stabilization rules, workflow authority, and a concrete example you can copy.
@@ -32,22 +32,22 @@ Feedback can be a visual HUD update, spoken audio, haptics if available, logs, o
 The perception loop can use any provider that turns live context into normalized observations:
 
 <CardGroup cols={2}>
-  <Card title="VLM Inference" icon="eye">
+  <Card title="VLM Inference" icon="eye" href="/examples/rokid-overshoot">
     Continuous VLM inference via a service like Overshoot over a live WebRTC stream. Returns structured results at configurable intervals.
   </Card>
-  <Card title="Object Detection" icon="crosshairs">
-    Fine-tuned or open-vocabulary detector running on the backend. Returns class labels, bounding boxes, and confidence scores. See the [Object Detection guide](/guides/object-detection).
+  <Card title="Object Detection" icon="crosshairs" href="/guides/object-detection">
+    Fine-tuned or open-vocabulary detector running on the backend. Returns class labels, bounding boxes, and confidence scores.
   </Card>
-  <Card title="OCR / Markers" icon="font">
+  <Card title="OCR / Markers" icon="font" href="/guides/proactive-perception#perception-loop-options">
     Optical character recognition, barcode, or fiducial marker detection for text and code reading.
   </Card>
-  <Card title="Audio Events" icon="microphone">
+  <Card title="Audio Events" icon="microphone" href="/guides/voice-commands">
     Keyword detection, sound classification, or backend audio analysis triggered by the microphone stream.
   </Card>
-  <Card title="Periodic Image Turns" icon="camera">
+  <Card title="Periodic Image Turns" icon="camera" href="/guides/openai-realtime">
     Scheduled image turns sent to a realtime model for description or classification, without a full live stream.
   </Card>
-  <Card title="Hand / Pose / Gesture" icon="hand">
+  <Card title="Hand / Pose / Gesture" icon="hand" href="/guides/proactive-perception#perception-loop-options">
     Hand, body pose, or gesture detection for spatial interaction signals.
   </Card>
 </CardGroup>

@@ -6,7 +6,7 @@ description: "Proactive Rokid coach: Overshoot scans ingredients, OpenAI Realtim
 
 The `rokid-overshoot-openai-realtime` example turns Rokid Glasses into a proactive drink-making assistant. Instead of waiting for the wearer to ask questions, the backend scans what is on the table, picks the best matching recipe from a data-driven catalog, and then guides each step with short spoken instructions while watching what the wearer does. If the wearer picks up the wrong bottle, the assistant corrects them in real time. The interaction is meant to feel more like a helpful person standing next to you than a voice assistant waiting for prompts.
 
-It is also the most architecturally complete GlassKit example, combining four concurrent connections, a server-authoritative workflow state machine, Overshoot VLM inference with prompt switching per step, OpenAI Realtime sideband speech control, and a data-driven recipe format.
+It is also the most architecturally complete GlassKit example, combining seven concurrent connections across three services, a server-authoritative workflow state machine, Overshoot VLM inference with prompt switching per step, OpenAI Realtime sideband speech control, and a data-driven recipe format.
 
 ## What the App Does
 
@@ -32,10 +32,12 @@ It is also the most architecturally complete GlassKit example, combining four co
 
 ### Connection Graph
 
-```
+```text
 Rokid Glasses (Android)
   ├── Control WebSocket ←→ Backend (FastAPI)
   │     session lifecycle, HUD state, debug gestures
+  ├── HTTP → Backend (FastAPI)
+  │     SDP offer setup for vision and audio links
   ├── Vision WebRTC (video) → Overshoot (direct, brokered by backend)
   ├── Audio WebRTC (audio + data) ←→ OpenAI Realtime (direct, brokered by backend)
   │

@@ -1,7 +1,7 @@
 ---
-title: "OpenAI Realtime API with Rokid Glasses"
+title: "OpenAI Realtime Integration for Rokid Glasses Apps"
 sidebarTitle: "OpenAI Realtime"
-description: "Stream mic and camera audio from Rokid Glasses to OpenAI Realtime using three backend patterns: direct assistant, vision augmentation, and controlled speech."
+description: "Wire Rokid Glasses mic and camera to OpenAI Realtime using three patterns: direct assistant, backend-augmented vision, and backend-controlled speech."
 ---
 
 OpenAI Realtime is a low-latency, stateful API for speech-to-speech and multimodal sessions. This page explains how to wire it up with Rokid Glasses — covering the two-plane architecture, three integration patterns, the backend SDP broker, Android client setup, image injection for vision-augmented responses, and the tool loop.
@@ -323,7 +323,7 @@ async def send_tool_output(
   Intermediate tools (lookup, list) should generally continue. Terminal action tools should not — the backend has already updated workflow state and will speak the next line itself.
 </Note>
 
-## Image Injection for Backend-Augmented Vision
+## Image Injection
 
 For vision-augmented sessions, insert the latest frame after Realtime commits the user's audio item, then create the response exactly once.
 
