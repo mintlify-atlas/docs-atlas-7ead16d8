@@ -1,0 +1,84 @@
+---
+title: "GlassKit: Open-Source AI Smart Glasses Toolkit"
+sidebarTitle: "Introduction"
+description: "GlassKit is an open-source toolkit for building AI-powered smart glasses apps, starting with Rokid Glasses — includes an agent skill, starter app, and runnable examples."
+---
+
+GlassKit is an open-source toolkit for building AI-powered smart glasses apps. It starts with Rokid Glasses and includes everything you need to ship real applications: an agent skill that teaches coding agents smart-glasses context, a starter app scaffold, runnable examples you can copy and adapt, and hardware setup guides. This page gives you an overview of what GlassKit is, what Rokid Glasses are, and how the repository is organized.
+
+## What Are Rokid Glasses?
+
+Rokid Glasses are Android-based smart glasses designed for hands-free, AI-assisted workflows. Unlike a phone or tablet, they have no touchscreen — interaction happens entirely through a temple touchpad, voice commands, and the display.
+
+Key hardware characteristics:
+
+- **Outward-facing camera** — captures what the wearer sees for vision AI pipelines
+- **Monochrome HUD** — a green binocular 480×640 display; black renders as transparent, white as green
+- **Temple touchpad** — four gestures: tap (select), double-tap (back), swipe forward (next), swipe backward (previous)
+- **Microphones and speaker** — for voice input and audio feedback
+- **No touchscreen** — all UI must be designed for the HUD and touchpad model
+- **No cellular** — networked apps require device Wi-Fi or a phone companion app
+
+Because they run Android, you build Rokid Glasses apps like Android phone apps. The glasses have less CPU and RAM than phones, so implementations need to be efficient — especially camera, microphone, and networking code.
+
+## What GlassKit Includes
+
+GlassKit packages three things that make smart-glasses app development faster:
+
+**Agent skill** — Install the GlassKit skill with `npx skills add RealComputer/GlassKit` and your coding agent (Codex, Claude Code, Cursor, and others) gains smart-glasses context: Rokid device constraints, HUD layout patterns, sensor access, touchpad controls, WebRTC streaming, voice commands, and real-time AI integration. Smart-glasses apps have unique aspects coding agents are not used to handling; the skill fills that gap.
+
+**Starter app** — A minimal Rokid Glasses Android project with HUD layout and navigation patterns already wired up. Copy it to bootstrap a new app in seconds.
+
+**Runnable examples** — Complete, working apps you can copy and adapt. They cover camera and mic capture, WebRTC streaming, OpenAI Realtime integration, offline voice commands with Vosk, object detection with RF-DETR, and more.
+
+## How Apps Work
+
+A typical GlassKit app has four pieces:
+
+1. A Rokid Glasses app (Android) captures camera and microphone input, handles touchpad gestures, and renders a HUD.
+2. WebRTC carries live media between the glasses, your backend, and AI services.
+3. A backend coordinates session setup, workflow state, model calls, tool calls, and app-specific decisions.
+4. The wearer gets real-time feedback through the display and audio.
+
+Some pieces can run offline — local voice commands, device controls, and on-device vision or privacy processing don't need a network.
+
+## Repository Map
+
+| Path | What it contains |
+| --- | --- |
+| `skills/glasskit/` | Agent skill, Rokid Glasses starter app, and smart-glasses app references for coding agents and human developers |
+| `docs/` | Hardware setup, Rokid Glasses device notes, and demo-recording workflow |
+| `examples/` | Runnable Rokid Glasses examples you can copy or adapt |
+
+## Where to Go Next
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Three ways to start: install the agent skill, copy the starter app, or copy a complete example.
+  </Card>
+  <Card
+    title="Hardware Setup"
+    icon="glasses"
+    href="/hardware-setup"
+  >
+    Get Rokid Glasses, connect via ADB, configure Wi-Fi, and set up a phone or emulator for testing.
+  </Card>
+  <Card
+    title="App Architecture"
+    icon="sitemap"
+    href="/concepts/app-architecture"
+  >
+    Understand the four-layer model: Android app, WebRTC, backend, and wearer feedback.
+  </Card>
+  <Card
+    title="Examples"
+    icon="code"
+    href="/examples/overview"
+  >
+    Browse runnable examples covering OpenAI Realtime, object detection, WebRTC streaming, and more.
+  </Card>
+</CardGroup>

@@ -1,0 +1,182 @@
+---
+title: "Rokid Glasses Speedrun Timer with RF-DETR Detection"
+sidebarTitle: "Speedrun Timer"
+description: "Vision-driven speedrun HUD for Rokid Glasses: JSON split config, RF-DETR object detection, two-hit confirmation, and annotated frames to tune your model."
+---
+
+The `rokid-rfdetr` example puts a vision-driven speedrun HUD on Rokid Glasses. The glasses stream live camera video to a FastAPI backend that runs RF-DETR object detection, tracks a configurable set of splits, and pushes state updates back to the HUD over a WebRTC data channel. A sushi-making speedrun is included as the reference configuration, but the system is fully data-driven: define your own objects and splits in a single JSON file to time any physical task. The example also captures annotated frames to disk so you can inspect detections and tune your model.
+
+## Features
+
+- **Global timer and split timing HUD** — monochrome display shows elapsed time per split and overall.
+- **Configurable speedrun definitions** — groups, splits, and object-detection class mappings live in `backend/speedrun_config.json`.
+- **Two-hit confirmation** — each split requires two consecutive detections before advancing, reducing false positives.
+- **Annotated frame capture** — backend saves JPEG frames with bounding boxes for inspection and model tuning.
+- **Manual split advance/back** — swipe forward or backward on the touchpad to move splits during testing.
+- **Temple tap to start** — tap the temple area to begin the run timer.
+
+## Architecture
+
+| Component | Location | Language |
+|---|---|---|
+| Glasses app | `rokid/` | Kotlin |
+| FastAPI backend + RF-DETR inference | `backend/` | Python 3.12 |
+
+The Android app (`rokid/`) runs a single WebRTC session to `/vision/session`. It sends H.264 video and receives config/state/split events over a data channel. `BackendVisionClient` owns WebRTC setup and data channel messaging. `MainActivity` handles HUD rendering, timer management, and touchpad controls.
+
+The backend (`backend/`) exposes a FastAPI `/vision/session` endpoint. `main.py` accepts the WebRTC offer, sets up the peer connection, and wires incoming video tracks to `VisionProcessor`. The vision processor runs the RF-DETR inference loop on the latest frame and calls `SpeedrunController.on_detection()`. `SpeedrunController` implements the two-hit confirmation rule and the split state machine, then broadcasts state events back over the data channel.
+
+## Requirements
+
+- [Rokid Glasses + dev cable](https://github.com/RealComputer/GlassKit/blob/main/docs/how-to-get-rokid-glasses.md)
+- Android Studio with `adb`
+- Python 3.12 with `uv`
+- Roboflow API key (`ROBOFLOW_API_KEY`) — only needed to download weights once; inference runs locally after that.
+
+## Configuration
+
+<Steps>
+  <Step title="Configure the glasses app">
+    Fill out `rokid/local.properties` with the backend WebRTC session URL:
+
+    ```properties
+    VISION_SESSION_URL=http://<YOUR_BACKEND>/vision/session
+    ```
+  </Step>
+  <Step title="Configure the backend">
+    ```sh
+    cd backend
+    cp .env.example .env
+    # Set ROBOFLOW_API_KEY in .env
+    ```
+  </Step>
+  <Step title="Configure your speedrun">
+    Edit `backend/speedrun_config.json` with your speedrun name, split groups, and the detection class that triggers each split. See the [Speedrun Config Format](#speedrun-config-format) section below.
+  </Step>
+</Steps>
+
+## Speedrun Config Format
+
+The entire speedrun definition lives in `backend/speedrun_config.json`. Here is the full reference sushi config included with the example:
+
+```json
+{
+  "name": "Sushi Speedrun: Trio Any%",
+  "groups": [
+    {
+      "name": "Tuna Nigiri",
+      "splits": [
+        { "label": "Pick up rice", "complete_on_class": "rice_in_hand" },
+        { "label": "Top with tuna", "complete_on_class": "nigiri_on_board" }
+      ]
+    },
+    {
+      "name": "Cucumber Maki",
+      "splits": [
+        { "label": "Lay nori", "complete_on_class": "maki_nori_on_makisu" },
+        { "label": "Add rice and cucumber", "complete_on_class": "maki_ready_with_rice_cucumber" },
+        { "label": "Roll and cut", "complete_on_class": "maki_piece_on_board" }
+      ]
+    },
+    {
+      "name": "Ikura Gunkan",
+      "splits": [
+        { "label": "Form rice, wrap nori", "complete_on_class": "gunkan_rice_nori_base_ready" },
+        { "label": "Top with ikura", "complete_on_class": "gunkan_ikura_on_plate" }
+      ]
+    }
+  ]
+}
+```
+
+Each `complete_on_class` value must match a class name your trained RF-DETR model can detect. Splits advance in order within each group; groups run sequentially.
+
+## Backend Environment Overrides
+
+In addition to `ROBOFLOW_API_KEY`, the backend supports these optional overrides:
+
+| Variable | Description |
+|---|---|
+| `RFDETR_MODEL_ID` | Roboflow model ID to download (defaults to the example sushi model). |
+| `RFDETR_CONFIDENCE` | Minimum detection confidence threshold (0.0–1.0). |
+| `RFDETR_FRAME_DIR` | Directory where annotated frames are saved. |
+| `RFDETR_HISTORY_LIMIT` | Number of annotated frames kept on disk. |
+| `RFDETR_JPEG_QUALITY` | JPEG quality for saved annotated frames (1–95). |
+
+## Run the Backend
+
+```sh
+cd backend
+uv sync
+uv run --env-file .env fastapi dev main.py --host 0.0.0.0
+```
+
+## Run the Glasses App
+
+<Steps>
+  <Step title="Connect Rokid Glasses and enable Wi-Fi">
+    ```sh
+    adb devices
+    adb shell cmd wifi status
+    adb shell cmd wifi set-wifi-enabled enabled
+    adb shell 'cmd wifi connect-network "NAME" wpa2 "PASSWORD"'
+    adb shell cmd wifi status
+    ```
+  </Step>
+  <Step title="Optional: wireless ADB">
+    ```sh
+    adb shell ip -f inet addr show wlan0
+    ping -c 5 -W 3 <IP>
+    adb tcpip 5555
+    adb connect <IP>
+    adb devices
+    ```
+  </Step>
+  <Step title="Build and run">
+    Open the `rokid/` directory in Android Studio, select Rokid Glasses, and run the app. To rebuild after changes:
+
+    ```sh
+    cd rokid && ./gradlew :app:assembleDebug
+    ```
+  </Step>
+</Steps>
+
+## Key Backend Files
+
+| File | Description |
+|---|---|
+| `backend/main.py` | FastAPI app, `/vision/session` WebRTC endpoint, data channel handling. |
+| `backend/vision.py` | RF-DETR inference loop and annotated frame saving. |
+| `backend/speedrun.py` | Speedrun config loader and split state machine. |
+| `backend/speedrun_config.json` | Speedrun name, groups/splits, and detection class mapping. |
+| `backend/.env.example` | Environment variable template. |
+
+## How to Prepare a Model
+
+Each speedrun needs a fine-tuned RF-DETR model whose class names match the `complete_on_class` values in your config.
+
+<Steps>
+  <Step title="Record footage">
+    Use the standard Rokid Glasses video recording feature to capture example runs of your physical task, without running the app.
+  </Step>
+  <Step title="Train the model">
+    Fine-tune an RF-DETR model on your footage. Follow the [RF-DETR training guide on YouTube](https://www.youtube.com/watch?v=-OvpdLAElFA) for a step-by-step walkthrough using Roboflow.
+  </Step>
+  <Step title="Choose a weight loading strategy">
+    The backend uses the Roboflow `inference` library by default, which downloads weights from Roboflow on first run and then caches them locally. `ROBOFLOW_API_KEY` is only needed for that initial download.
+
+    To avoid any Roboflow dependency, train or export weights elsewhere (for example, in a Colab notebook) and switch the backend to use the `rfdetr` library directly. This lets you load weights from a local path with no API key required.
+  </Step>
+  <Step title="Write your speedrun config">
+    Create a new `speedrun_config.json` with group names, split labels, and `complete_on_class` values that match the class names in your trained model.
+  </Step>
+</Steps>
+
+<Tip>
+  Annotated frames saved to `RFDETR_FRAME_DIR` are useful for debugging false positives. If a split is triggering too early or too late, inspect the saved frames to understand what the model is seeing at those moments.
+</Tip>
+
+## Related Examples
+
+- [IKEA Assembly Assistant](/examples/rokid-openai-realtime) — voice-first assistant with OpenAI Realtime; see the `rokid-openai-realtime-rfdetr` variant for RF-DETR integrated with Realtime.
+- [Proactive Drink-making Coach](/examples/rokid-overshoot-openai-realtime) — combines Overshoot VLM inference with OpenAI Realtime speech for a full-stack proactive assistant.

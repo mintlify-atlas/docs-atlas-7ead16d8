@@ -1,0 +1,128 @@
+---
+title: "Rokid Feature Demo: Smart Glasses Device Reference"
+sidebarTitle: "Feature Demo"
+description: "Set up the Rokid feature demo: offline Vosk voice commands, touchpad controls, camera, microphone, AVD emulator, and the ScreenController architecture."
+---
+
+The Rokid Feature Demo is a reference Android app for Rokid Glasses that exercises the core device features you'll reach for in nearly every real app. It covers touchpad and voice-command navigation, live camera preview, microphone level metering, and audio playback — all using reusable `ScreenController` components you can copy directly. When physical glasses are unavailable, the app runs on a standard Android phone or an AVD emulator with a touchscreen fallback for the Rokid touchpad.
+
+## Control Mapping
+
+All interactions map to three input sources. Use the table below as a reference when testing on different hardware.
+
+| Intent | Rokid Glasses touchpad (`KeyEvent`) | Voice command | Android touchscreen |
+|---|---|---|---|
+| Select / OK | Tap (`KEYCODE_ENTER`) | `select` | Tap |
+| Back / cancel | Double tap (`KEYCODE_BACK`) | `back` | Double tap |
+| Move focus right/down | Swipe forward (`KEYCODE_DPAD_DOWN`) | `next` | Swipe right |
+| Move focus left/up | Swipe back (`KEYCODE_DPAD_UP`) | `previous` | Swipe left |
+
+<Note>
+  Do not disable the back control on your app's root screen. On Rokid Glasses the double-tap back is the only way to exit the app.
+</Note>
+
+## Setup
+
+### 1. Download the Vosk Model
+
+Vosk handles offline voice commands. Run the download script before your first build:
+
+```sh
+./scripts/download_vosk_model.sh
+```
+
+### 2. Emulator Setup (optional)
+
+If you want to develop without physical glasses, create an AVD with a Rokid-matching screen shape.
+
+<Steps>
+  <Step title="Install the system image and create the AVD">
+    ```sh
+    sdkmanager "system-images;android-36.1;google_apis;arm64-v8a"
+    avdmanager create avd \
+      -n glass_480x640 \
+      -k "system-images;android-36.1;google_apis;arm64-v8a" \
+      -d "pixel_9a"
+    ```
+  </Step>
+  <Step title="Configure the AVD for Rokid screen dimensions">
+    Edit `~/.android/avd/glass_480x640.avd/config.ini` and add or update these four keys:
+
+    ```ini
+    hw.lcd.width=480
+    hw.lcd.height=640
+    hw.lcd.density=240
+    hw.audioOutput=yes
+    ```
+  </Step>
+  <Step title="Launch the emulator">
+    ```sh
+    emulator -avd glass_480x640 -camera-back emulated
+    ```
+
+    Other `-camera-back` sources (`webcam0`, `virtualscene`, `videoplayback`) may work depending on your local setup.
+  </Step>
+</Steps>
+
+<Note>
+  Host microphone passthrough is optionally available: add `hw.audioInput=yes` to `config.ini`, start the emulator with `-allow-host-audio`, then run `adb emu avd hostmicon`. In practice, camera and microphone passthrough on the emulator are not always stable enough for reliable development testing.
+</Note>
+
+## Build and Install
+
+Build a debug APK:
+
+```sh
+./gradlew :app:assembleDebug
+```
+
+Install to a connected device (or running emulator):
+
+```sh
+adb install app/build/outputs/apk/debug/app-debug.apk
+```
+
+To stream logs from the running app:
+
+```sh
+adb logcat -v time --pid "$(adb shell pidof -s com.example.rokidfeaturedemo)"
+```
+
+## Architecture
+
+The app uses a `ScreenController` pattern to keep each screen's state, rendering, and input handling isolated from the activity shell. `MainActivity` owns the lifecycle, permissions, and input routing; each screen is a self-contained controller class.
+
+| Class | Responsibility |
+|---|---|
+| `MainActivity` | Activity shell: shared lifecycle, permissions, Rokid/emulator input mapping, screen navigation. |
+| `RokidHudViewportLayout` | Fixed 3:4 HUD viewport container that keeps phone rendering letterboxed to the Rokid Glasses shape. |
+| `ScreenController` | Shared screen abstractions and navigation results. |
+| `MenuScreenController` | Main menu screen: focus navigation, select action. |
+| `AudioScreenController` | Audio test tones: play/stop controls. |
+| `CameraScreenController` | Live camera preview. |
+| `MicrophoneScreenController` | Live microphone level meter and current voice-command status. |
+| `VoiceCommandRecognizer` | Vosk model unpacking, endpoint tuning, `AudioRecord` loop, partial/final result parsing, and command dispatch. |
+
+## Screens
+
+The app has four screens you can navigate between using the control mapping above:
+
+- **Menu** — root screen with navigation to the three feature screens.
+- **Camera** — live camera preview rendered on the HUD.
+- **Audio** — playback test tones to verify speaker output.
+- **Microphone** — live input level meter plus the current Vosk voice-command recognition status.
+
+## Key Files
+
+| File | Description |
+|---|---|
+| `app/src/main/java/…/MainActivity.kt` | Activity shell for lifecycle, permissions, input mapping, and screen navigation. |
+| `app/src/main/java/…/RokidHudViewportLayout.kt` | 3:4 letterbox container for phone/emulator rendering. |
+| `app/src/main/java/…/ScreenController.kt` | Base screen abstractions and navigation result types. |
+| `app/src/main/java/…/MenuScreenController.kt` | Menu screen state and rendering. |
+| `app/src/main/java/…/CameraScreenController.kt` | Camera preview screen. |
+| `app/src/main/java/…/AudioScreenController.kt` | Audio test tone screen. |
+| `app/src/main/java/…/MicrophoneScreenController.kt` | Microphone level meter and Vosk status screen. |
+| `app/src/main/java/…/VoiceCommandRecognizer.kt` | Vosk model loading, `AudioRecord` loop, and command dispatch. |
+| `app/src/main/res/layout/activity_main.xml` | Shared HUD chrome with per-screen layout includes. |
+| `scripts/download_vosk_model.sh` | Downloads the Vosk ASR model into the project assets. |

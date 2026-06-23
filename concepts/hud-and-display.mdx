@@ -1,0 +1,324 @@
+---
+title: "Rokid HUD & Display: Specs, Layouts, and Patterns"
+sidebarTitle: "HUD & Display"
+description: "Learn Rokid Glasses HUD specifications, the ScreenController lifecycle pattern, HudViewportLayout scaling, and best practices for readable on-lens UI."
+---
+
+The Rokid Glasses HUD is a monochrome binocular display projected directly into the wearer's field of view. Unlike a phone screen, it has fixed physical constraints — a portrait aspect ratio, green-only color, and transparency where you render black. This page covers the hardware specs, the `ScreenController` pattern for managing screens, the `HudViewportLayout` custom view that handles correct scaling, and practical guidance for building readable HUD interfaces.
+
+---
+
+## HUD Hardware Specifications
+
+| Property | Value |
+|---|---|
+| Resolution | 480 × 640 px (portrait) |
+| Display density | 240 dpi |
+| Color | Monochrome binocular (green) |
+| Black pixels | Transparent (see-through) |
+| White pixels | Appear green on-device |
+| Design canvas | 320 × 427 dp (at 240 dpi) |
+
+<Warning>
+  Colors other than black and white can be used (e.g., in images), but the physical display renders them as green, transparent, or intermediate brightness levels. Design for black backgrounds and white foregrounds to get predictable results.
+</Warning>
+
+The display is **binocular** — both lenses show the same content. There is no stereo offset; content appears as a fixed overlay in the wearer's central vision.
+
+---
+
+## ScreenController Pattern
+
+GlassKit apps organize their HUD content into *screens*, each managed by a `ScreenController`. A controller owns one panel view and implements a small lifecycle interface. The hosting Activity holds all controllers, shows the active one, and routes navigation actions to it.
+
+This approach keeps screens independent and testable without the overhead of the Android Fragment back stack.
+
+### Interface and Base Class
+
+The `ScreenController` interface from the starter app defines the full contract:
+
+```kotlin
+internal interface ScreenController {
+    val screen: ScreenId
+
+    fun setVisible(visible: Boolean)
+
+    fun render()
+
+    fun handleAction(action: NavigationAction): ScreenCommand
+
+    fun navigationHint(context: Context): String
+
+    fun onEnter() {}
+
+    fun onExit() {}
+}
+
+internal abstract class ViewScreenController(
+    final override val screen: ScreenId,
+    protected val panelView: View
+) : ScreenController {
+
+    override fun setVisible(visible: Boolean) {
+        panelView.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    override fun render() = Unit
+}
+```
+
+The feature-demo variant extends the interface with additional lifecycle hooks for Android host events:
+
+```kotlin
+internal interface ScreenController {
+    val screen: DemoScreen
+
+    fun setVisible(visible: Boolean)
+    fun render()
+    fun handleAction(action: DemoAction): NavigationResult
+
+    fun onEnter() {}
+    fun onExit() {}
+    fun onHostStart() {}
+    fun onHostStop() {}
+    fun onPermissionsUpdated() {}
+    fun onDestroy() {}
+}
+
+internal abstract class PanelScreenController(
+    final override val screen: DemoScreen,
+    protected val panelView: View
+) : ScreenController {
+
+    override fun setVisible(visible: Boolean) {
+        panelView.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    override fun render() = Unit
+
+    override fun handleAction(action: DemoAction): NavigationResult = NavigationResult.Stay
+}
+```
+
+### Lifecycle Methods
+
+| Method | When called |
+|---|---|
+| `onEnter()` | After the screen becomes the active one |
+| `onExit()` | Before switching away from this screen |
+| `onHostStart()` | On Activity `onStart()` (feature-demo variant) |
+| `onHostStop()` | On Activity `onStop()` (feature-demo variant) |
+| `onPermissionsUpdated()` | After a runtime permission result |
+| `onDestroy()` | On Activity `onDestroy()` |
+| `render()` | Called by the host whenever HUD state should be redrawn |
+| `setVisible(Boolean)` | Shows or hides the panel view |
+
+### Navigation Result Types
+
+`handleAction` returns a sealed type that tells the host Activity what to do next:
+
+```kotlin
+// Starter app version
+internal sealed interface ScreenCommand {
+    object Stay : ScreenCommand
+    object ExitApp : ScreenCommand
+    data class Open(val screen: ScreenId) : ScreenCommand
+}
+
+// Feature-demo version
+internal sealed interface NavigationResult {
+    object Stay : NavigationResult
+    object ExitApp : NavigationResult
+    data class Open(val screen: DemoScreen) : NavigationResult
+}
+```
+
+<Tip>
+  Return `ExitApp` only from the root/menu screen when the wearer double-taps. All other screens should return `Open(parentScreen)` on back so the stack unwinds gracefully.
+</Tip>
+
+---
+
+## HudViewportLayout
+
+`HudViewportLayout` is a custom `FrameLayout` that scales its children to always fill the available space at the correct 3:4 portrait aspect ratio, matching the physical HUD. It handles both the Rokid device (where the view fills the exact HUD window) and phone or emulator testing (where the window may be a different size or orientation).
+
+### How It Works
+
+1. On `onMeasure`, it calculates the largest 3:4 rectangle that fits in the available space.
+2. It measures all children against the **design canvas** size (320 dp wide × 427 dp tall).
+3. On `onLayout`, it positions children at `(0,0)` in design coordinates, then applies a uniform scale transform and centering translation so they appear correctly at the actual measured size.
+
+### Starter App Implementation
+
+```kotlin
+class HudViewportLayout @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null
+) : FrameLayout(context, attrs) {
+
+    companion object {
+        private const val HUD_ASPECT_RATIO = 3f / 4f
+        private const val HUD_DESIGN_WIDTH_DP = 320f
+        private const val HUD_DESIGN_HEIGHT_DP = HUD_DESIGN_WIDTH_DP / HUD_ASPECT_RATIO
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val availableWidth = MeasureSpec.getSize(widthMeasureSpec)
+        val availableHeight = MeasureSpec.getSize(heightMeasureSpec)
+        if (availableWidth == 0 || availableHeight == 0) {
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            return
+        }
+
+        val availableAspectRatio = availableWidth.toFloat() / availableHeight.toFloat()
+        val measuredWidth: Int
+        val measuredHeight: Int
+
+        if (availableAspectRatio > HUD_ASPECT_RATIO) {
+            measuredHeight = availableHeight
+            measuredWidth = (measuredHeight * HUD_ASPECT_RATIO).roundToInt()
+        } else {
+            measuredWidth = availableWidth
+            measuredHeight = (measuredWidth / HUD_ASPECT_RATIO).roundToInt()
+        }
+
+        val designWidthPx = designWidthPx()
+        val designHeightPx = designHeightPx()
+        val childWidthSpec = MeasureSpec.makeMeasureSpec(designWidthPx, MeasureSpec.EXACTLY)
+        val childHeightSpec = MeasureSpec.makeMeasureSpec(designHeightPx, MeasureSpec.EXACTLY)
+
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == View.GONE) continue
+            child.measure(childWidthSpec, childHeightSpec)
+        }
+
+        setMeasuredDimension(measuredWidth, measuredHeight)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val designWidthPx = designWidthPx()
+        val designHeightPx = designHeightPx()
+        val scale = min(width.toFloat() / designWidthPx, height.toFloat() / designHeightPx)
+        val translationX = (width - designWidthPx * scale) / 2f
+        val translationY = (height - designHeightPx * scale) / 2f
+
+        for (index in 0 until childCount) {
+            val child = getChildAt(index)
+            if (child.visibility == View.GONE) continue
+
+            child.layout(0, 0, designWidthPx, designHeightPx)
+            child.pivotX = 0f
+            child.pivotY = 0f
+            child.scaleX = scale
+            child.scaleY = scale
+            child.translationX = translationX
+            child.translationY = translationY
+        }
+    }
+
+    private fun designWidthPx() = dpToPx(HUD_DESIGN_WIDTH_DP)
+    private fun designHeightPx() = dpToPx(HUD_DESIGN_HEIGHT_DP)
+    private fun dpToPx(dp: Float) = (dp * resources.displayMetrics.density).roundToInt()
+}
+```
+
+### RokidHudViewportLayout (Feature Demo Variant)
+
+The feature-demo example includes `RokidHudViewportLayout`, which uses the physical pixel and DPI constants directly rather than design-DP constants. The layout logic is identical — it converts reference pixels to current-device pixels via `DisplayMetrics.DENSITY_DEFAULT`:
+
+```kotlin
+companion object {
+    // Verified on a connected Rokid device via `adb shell wm size` and
+    // `adb shell wm density`: 480x640 physical pixels at 240 dpi.
+    private const val HUD_REFERENCE_WIDTH_PX = 480f
+    private const val HUD_REFERENCE_HEIGHT_PX = 640f
+    private const val HUD_REFERENCE_DENSITY_DPI = 240f
+    private const val HUD_ASPECT_RATIO = HUD_REFERENCE_WIDTH_PX / HUD_REFERENCE_HEIGHT_PX
+}
+
+private fun referencePixelsToCurrentPixels(referencePixels: Float): Float {
+    val referenceDp = referencePixels * DisplayMetrics.DENSITY_DEFAULT / HUD_REFERENCE_DENSITY_DPI
+    return referenceDp * resources.displayMetrics.density
+}
+```
+
+Use whichever variant fits your project. Both produce the same result on a physical Rokid device. The `RokidHudViewportLayout` variant makes the hardware constraints explicit in the code.
+
+---
+
+## Screen Navigation Pattern
+
+Screens are independent objects, not Android Fragments. The hosting Activity holds an array of controllers, tracks the active screen index, and dispatches input actions:
+
+<Steps>
+  <Step title="Initialize all screens">
+    Create every `ScreenController` in `onCreate`, inflate each panel view, and add all panel views to the `HudViewportLayout` in the activity XML.
+  </Step>
+  <Step title="Show the initial screen">
+    Call `setVisible(true)` on the starting controller and `setVisible(false)` on all others. Call `onEnter()` on the active controller.
+  </Step>
+  <Step title="Route navigation actions">
+    Pass `NavigationAction` values (SELECT, BACK, NEXT, PREVIOUS) to `activeController.handleAction(action)`. Inspect the returned `ScreenCommand` to decide whether to stay, open a new screen, or exit.
+  </Step>
+  <Step title="Transition between screens">
+    Call `activeController.onExit()`, update the active reference, call `newController.setVisible(true)`, `oldController.setVisible(false)`, then `newController.onEnter()`.
+  </Step>
+  <Step title="Update the HUD">
+    Call `activeController.render()` whenever the data backing the current screen changes.
+  </Step>
+</Steps>
+
+---
+
+## HUD UI Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Text Size" icon="text-size">
+    Use at minimum 14 sp for body text. The HUD sits in the wearer's peripheral vision while they work; text that looks fine on a phone preview can be unreadable at a glance.
+  </Card>
+  <Card title="Contrast" icon="circle-half-stroke">
+    Always use white (`#FFFFFF`) foreground on black (`#000000`) background. Gray text reduces brightness on the green display. Avoid colored backgrounds — they become unpredictable shades of green.
+  </Card>
+  <Card title="Content Density" icon="layout">
+    Show only what the wearer needs right now. A maximum of three to five lines of text per screen avoids cognitive overload. Use short words and sentence fragments.
+  </Card>
+  <Card title="Navigation Hints" icon="hand-pointer">
+    Always display available touchpad actions at the bottom of the screen. The wearer cannot see a physical keyboard or button labels.
+  </Card>
+</CardGroup>
+
+<Note>
+  When testing on a phone or emulator, the white-on-black color scheme will look stark. This is correct. The on-device experience is green-on-transparent, which appears natural in the wearer's field of view.
+</Note>
+
+### Recommended Layout Structure
+
+Place a navigation hint row at the bottom of each screen panel so the wearer always knows what the touchpad does:
+
+```xml
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#000000"
+    android:padding="16dp">
+
+    <!-- Main content fills available space -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:textColor="#FFFFFF"
+        android:textSize="16sp" />
+
+    <!-- Navigation hint pinned to bottom -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#FFFFFF"
+        android:textSize="12sp"
+        android:alpha="0.6" />
+</LinearLayout>
+```

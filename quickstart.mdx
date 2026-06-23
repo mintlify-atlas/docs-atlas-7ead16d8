@@ -1,47 +1,169 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "GlassKit Quickstart: Three Ways to Start Building"
+sidebarTitle: "Quickstart"
+description: "Install the GlassKit agent skill, copy the Rokid starter app, or grab a complete example — pick the approach that matches how you like to build."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+GlassKit gives you three ways to start building Rokid Glasses apps, depending on whether you want agent-assisted development, a minimal scaffold, or a feature-complete starting point. This page walks through each approach with the exact commands you need.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+## Choose Your Starting Point
 
-## Prerequisites
+<CardGroup cols={2}>
+  <Card
+    title="Agent Skill"
+    icon="robot"
+    href="#option-1-install-the-glasskit-agent-skill"
+  >
+    Best when using Codex, Claude Code, Cursor, or another coding agent to build your app.
+  </Card>
+  <Card
+    title="Starter App"
+    icon="layer-group"
+    href="#option-2-copy-the-rokid-starter-app"
+  >
+    Best when you want a minimal scaffold with HUD layout and navigation already wired up.
+  </Card>
+  <Card
+    title="Complete Example"
+    icon="copy"
+    href="#option-3-copy-a-complete-example"
+  >
+    Best when an existing demo is close to the app you want to build.
+  </Card>
+  <Card
+    title="Hardware Setup"
+    icon="glasses"
+    href="/hardware-setup"
+  >
+    Need to set up your Rokid Glasses or ADB first? Start here.
+  </Card>
+</CardGroup>
 
-Before you begin, you must have:
+---
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+## Option 1: Install the GlassKit Agent Skill
 
-## Get started
+Use this approach when you want Codex, Claude Code, Cursor, or another coding agent to understand smart-glasses app development while it builds your app.
+
+Smart-glasses apps have unique aspects that coding agents are not used to handling: vision AI pipelines, small HUDs, camera and microphone access, touchpad and voice inputs, battery constraints, and wearer-facing UX. The GlassKit agent skill packages that context — along with reference patterns and the starter template — so agents can build more realistic glasses apps from the first pass.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Install the skill">
+    Run the following command in your project directory. It uses [the Agent Skills CLI](https://github.com/vercel-labs/skills) and does not require a global install.
 
-    ```bash
-    npm install your-package
+    ```sh
+    npx skills add RealComputer/GlassKit
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+  <Step title="Start building with your agent">
+    Open your coding agent and describe what you want to build. The skill gives your agent the Rokid device constraints, HUD layout patterns, sensor access patterns, and real-time AI integration context it needs.
 
-    ```bash
-    your-cli init
-    ```
+    Example prompts to get started:
+
+    - `Create a starter Rokid Glasses app`
+    - `Add a camera preview to the first screen using the glasskit skill`
+    - `Create a Rokid Glasses app that connects to OpenAI Realtime and talks about what it sees`
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+  <Step title="Keep the skill up to date">
+    As GlassKit evolves, update the skill to get the latest references and patterns:
 
-    ```bash
-    your-cli start
+    ```sh
+    npx skills update glasskit
     ```
   </Step>
 </Steps>
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  The agent skill works best with coding agents that support skill context injection, such as Codex, Claude Code, and Cursor. Check your agent's documentation for how it discovers and applies skills.
 </Tip>
+
+---
+
+## Option 2: Copy the Rokid Starter App
+
+Use this approach when you want a small app scaffold with Rokid HUD layout and navigation patterns already in place. The starter is the same template the agent skill uses — it is the recommended foundation for new apps.
+
+<Steps>
+  <Step title="Clone the GlassKit repository and extract the starter">
+    These commands clone the repo and extract just the starter app into a new directory, without copying the rest of the GlassKit repository:
+
+    ```sh
+    git clone https://github.com/RealComputer/GlassKit.git
+    mkdir rokid-starter
+    git -C GlassKit archive HEAD:skills/glasskit/assets/rokid-hello-world | tar -x -C rokid-starter
+    ```
+  </Step>
+  <Step title="Open the project in Android Studio">
+    Open the `rokid-starter` directory in Android Studio. Let Gradle sync complete before building.
+  </Step>
+  <Step title="Build and install">
+    Run these commands from the `rokid-starter` directory with your Rokid Glasses connected via the development cable (or an Android phone/emulator):
+
+    ```sh
+    ./gradlew :app:assembleDebug
+    adb install -r app/build/outputs/apk/debug/app-debug.apk
+    adb shell am start -n com.example.rokidhello/.MainActivity
+    ```
+  </Step>
+  <Step title="Rename the package (optional)">
+    The starter uses the `com.example.rokidhello` package name. Rename it in Android Studio before publishing or distributing your app.
+  </Step>
+</Steps>
+
+<Note>
+  The starter app includes a touchpad navigation scaffold and a viewport wrapper that maps touchpad gestures to touchscreen controls for phone and emulator testing. See [Hardware Setup](/hardware-setup) for controls reference.
+</Note>
+
+---
+
+## Option 3: Copy a Complete Example
+
+Use this approach when one of the GlassKit demos is close to the app you want to build. Copying a complete example gives you working code with all integrations already in place.
+
+The pattern is the same for any example. The steps below use `rokid-feature-demo` — a device-feature reference app covering touchpad navigation, offline voice commands, camera, mic, audio, and reusable screen controllers — but you can substitute any example name.
+
+<Steps>
+  <Step title="Clone the GlassKit repository and extract the example">
+    Replace `rokid-feature-demo` with the name of the example you want to copy:
+
+    ```sh
+    git clone https://github.com/RealComputer/GlassKit.git
+    mkdir my-glasses-app
+    git -C GlassKit archive HEAD:examples/rokid-feature-demo | tar -x -C my-glasses-app
+    ```
+  </Step>
+  <Step title="Follow the example's README">
+    Each example has its own README with exact setup steps, required environment variables, and any backend setup. Open `my-glasses-app/README.md` and follow it from the top.
+  </Step>
+  <Step title="Build and run">
+    Build, install, and launch commands follow the same pattern across examples:
+
+    ```sh
+    ./gradlew :app:assembleDebug
+    adb install -r app/build/outputs/apk/debug/app-debug.apk
+    adb shell am start -n com.example.YOURPACKAGE/.MainActivity
+    ```
+
+    Check the example README for the exact package name and any backend commands you need to run alongside the app.
+  </Step>
+</Steps>
+
+<Tip>
+  Browse the full list of examples at [Examples Overview](/examples/overview) to find the one closest to what you want to build.
+</Tip>
+
+---
+
+## Requirements
+
+All three approaches share the same base requirements:
+
+- **`adb`** — Android Debug Bridge, included with Android Studio or installable separately
+- **Rokid Glasses with a development cable** — for on-device testing and debugging; see [Hardware Setup](/hardware-setup)
+- **Android phone or emulator** — for quick iteration before testing on device
+
+Examples that include a backend also require:
+
+- **`uv`** — for Python backends
+- **`node`** — for TypeScript backends
+- **API keys** — such as `OPENAI_API_KEY`, `OVERSHOOT_API_KEY`, or `ROBOFLOW_API_KEY` depending on the example

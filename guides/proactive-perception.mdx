@@ -1,0 +1,145 @@
+---
+title: "Proactive Perception Pattern for Glasses Apps"
+sidebarTitle: "Proactive Apps"
+description: "Build continuous-observation glasses apps that react to what the wearer sees without requiring explicit commands, using stabilization rules and backend workflow authority."
+---
+
+Proactive glasses apps continuously observe real-world context and react when something meaningful changes — they are not chat flows waiting for user prompts. This page explains the core loop, perception providers, observation contract, stabilization rules, workflow authority, and a concrete example you can copy.
+
+Use this pattern when camera, audio, sensor, or backend observations should guide, alert, adapt, or trigger actions without requiring an explicit command for every step.
+
+## Core Loop
+
+The proactive perception loop has five stages that run continuously while the app is active:
+
+```text
+camera/audio/sensors
+  -> perception loop
+  -> normalized observation
+  -> stabilization or trigger policy
+  -> app workflow/controller
+  -> wearer feedback or action
+```
+
+Feedback can be a visual HUD update, spoken audio, haptics if available, logs, or backend actions. The proactive pattern does not require any one output channel.
+
+<Note>
+  Perception providers should report observations. The app controller should own workflow changes and effects. Keeping these responsibilities separate makes providers swappable.
+</Note>
+
+## Perception Loop Options
+
+The perception loop can use any provider that turns live context into normalized observations:
+
+<CardGroup cols={2}>
+  <Card title="VLM Inference" icon="eye">
+    Continuous VLM inference via a service like Overshoot over a live WebRTC stream. Returns structured results at configurable intervals.
+  </Card>
+  <Card title="Object Detection" icon="crosshairs">
+    Fine-tuned or open-vocabulary detector running on the backend. Returns class labels, bounding boxes, and confidence scores. See the [Object Detection guide](/guides/object-detection).
+  </Card>
+  <Card title="OCR / Markers" icon="font">
+    Optical character recognition, barcode, or fiducial marker detection for text and code reading.
+  </Card>
+  <Card title="Audio Events" icon="microphone">
+    Keyword detection, sound classification, or backend audio analysis triggered by the microphone stream.
+  </Card>
+  <Card title="Periodic Image Turns" icon="camera">
+    Scheduled image turns sent to a realtime model for description or classification, without a full live stream.
+  </Card>
+  <Card title="Hand / Pose / Gesture" icon="hand">
+    Hand, body pose, or gesture detection for spatial interaction signals.
+  </Card>
+</CardGroup>
+
+Overshoot is useful for the VLM shape because it can run continuous inference over a live WebRTC stream and return structured results. Treat it as one possible perception provider behind the same observation contract, not as a requirement of the architecture.
+
+## Observation Contract
+
+Normalize provider output before any app logic sees it. Avoid letting raw VLM text, detector envelopes, transcripts, or provider-specific schemas directly drive behavior.
+
+Prefer small app-owned observation events:
+
+```json
+{
+  "type": "observation",
+  "generation": 4,
+  "source": "vision",
+  "task_id": "find-ingredient",
+  "value": {
+    "visible_items": ["lime", "cup"],
+    "ready": true
+  }
+}
+```
+
+The contract should make stale-result checks possible. Include a `generation`, active `task_id`, prompt id, detector id, or equivalent field when the perception request changes over time. Add a `timestamp` only when time-based stabilization needs it.
+
+## Stabilization Rules
+
+Continuous inference is noisy. The stabilization layer sits between raw observations and app behavior — it decides when an observation is trustworthy enough to act on.
+
+Useful rules include:
+
+| Rule | When to use |
+|---|---|
+| N consecutive observations | Simple debounce for object presence or scene state |
+| M milliseconds condition holds | Time-based confirmation before important transitions |
+| Rising edge count | Repeated physical actions (e.g. pour, tap) |
+| Confidence threshold | Filters low-quality model outputs |
+| Multi-provider agreement | High-stakes decisions requiring corroboration |
+| Explicit user confirmation | Actions that are hard to undo or have side effects |
+| Generation / task match | Discard stale results after the backend changes the active task |
+
+<Warning>
+  Do not emit user-facing feedback or external actions on every inference callback unless the app explicitly needs a live debug stream. A single noisy frame should never trigger a workflow transition.
+</Warning>
+
+## Workflow Authority
+
+Workflow authority means one controller owns the current app state, active perception request, and the effect of each observation. For Rokid-class glasses apps, this should usually be the backend. Serialize per-session workflow changes through that controller before mutating state.
+
+For each workflow state, define:
+
+- **Active perception query** — what the perception loop is looking for in this state.
+- **Observation schema** — the normalized structure accepted in this state.
+- **Trigger or stabilization rule** — how many observations, over what time, before acting.
+- **Transition, feedback, or action** — what happens when a valid observation arrives.
+- **Invalidation rule** — how old perception results are discarded when the state changes.
+
+This prevents raw model responses, client timers, transcripts, and disconnected services from independently advancing the app.
+
+```text
+Example state definition:
+  state: "waiting-for-lime"
+  perception_query: {detect: ["lime"], source: "vision"}
+  schema: {visible_items: [string], ready: boolean}
+  trigger: 3 consecutive observations with "lime" in visible_items
+  transition: -> "lime-confirmed", speak "Lime detected, add to glass"
+  invalidation: ignore observations with generation != current_generation
+```
+
+## Example: Drink-Making Coach
+
+A concrete example of this pattern is the proactive drink-making coach in GlassKit. It watches ingredients, picks a recipe based on what it sees, and guides the wearer through each step with spoken audio:
+
+<Card title="rokid-overshoot-openai-realtime" icon="github" href="https://github.com/RealComputer/GlassKit/tree/main/examples/rokid-overshoot-openai-realtime">
+  Proactive drink-making coach combining Overshoot for continuous VLM inference and OpenAI Realtime for spoken guidance. Its backend queues perception, OpenAI, control, and disconnect events through one session loop. Android streams media, sends gestures, and renders HUD and transcripts.
+</Card>
+
+That example uses Overshoot for the continuous VLM loop and OpenAI Realtime for spoken guidance, but the pattern generalizes to other perception providers and workflow domains.
+
+<Tip>
+  When adapting the pattern to a new domain, start by defining the observation contract and stabilization rules on paper before writing any code. The schema and trigger rules are the hardest parts to get right, and changing them later breaks both the perception loop and the workflow controller.
+</Tip>
+
+## Related Guides
+
+<CardGroup cols={2}>
+  <Card title="Object Detection" icon="crosshairs" href="/guides/object-detection">
+    Detector events, confirmation rules, normalized results, and detection-driven task progression.
+  </Card>
+  <Card title="OpenAI Realtime" icon="waveform" href="/guides/openai-realtime">
+    Backend-controlled speech, image injection after user audio turns, and sideband control.
+  </Card>
+</CardGroup>

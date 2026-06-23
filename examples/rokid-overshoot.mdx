@@ -1,0 +1,131 @@
+---
+title: "Rokid Glasses Live Scene Reader Using Overshoot VLM"
+sidebarTitle: "Scene Reader"
+description: "Temple-tap to stream Rokid camera to Overshoot and show VLM inference text on the HUD — auto-scrolling log, configurable prompt, model, and frame rate."
+---
+
+The `rokid-overshoot` example is the simplest way to get live AI scene descriptions running on Rokid Glasses. A temple tap starts streaming; the glasses send live camera video over WebRTC to the FastAPI backend, which creates and manages an Overshoot VLM stream. As Overshoot returns inference results, the backend relays each line back over a WebSocket to the glasses, where it appears as a rolling auto-scrolling log on the HUD. Tap again to stop. This example is also the foundation that `rokid-overshoot-openai-realtime` builds on for more advanced multi-modal workflows.
+
+## User Experience
+
+- **Tap** the temple area to start streaming.
+- **Tap** again to stop.
+- While running, new result lines appear at the bottom of the HUD and the view auto-scrolls.
+- Each new run starts with a clean screen.
+
+## Architecture
+
+```
+Rokid Glasses (Android)
+  ├── Temple tap → start/stop
+  ├── Camera → WebRTC offer → Backend (FastAPI)
+  │                               ├── Creates Overshoot stream (HTTP POST /streams)
+  │                               ├── Returns WebRTC answer SDP to glasses
+  │                               └── Opens Overshoot WebSocket → relays result text
+  └── WebSocket ← backend ← Overshoot inference events
+       └── HUD: append result line, auto-scroll
+```
+
+| Component | Location | Language |
+|---|---|---|
+| Glasses app | `rokid/` | Kotlin |
+| FastAPI session manager | `backend/` | Python 3.12 |
+
+The Android app (`rokid/`) handles temple-tap start/stop, camera capture, WebRTC offer/answer flow, and HUD rendering. `OvershootSessionClient` manages the WebRTC and backend WebSocket. `MainActivity` appends each result line to a rolling log and auto-scrolls while the session is active.
+
+The backend (`backend/`) is built around `OvershootSessionManager`. On session create it sends an HTTP `POST /streams` to Overshoot with the WebRTC offer, processing config, and inference prompt, receives the answer SDP, then opens a WebSocket to `wss://api.overshoot.ai/v0.2/ws/streams/{stream_id}` to receive inference events. Each `result` field in those events is forwarded to the Android app over the backend WebSocket. The manager also runs a keepalive task to renew the Overshoot stream lease, and reconnects the WebSocket with exponential backoff if it drops.
+
+## Requirements
+
+- [Rokid Glasses + dev cable](https://github.com/RealComputer/GlassKit/blob/main/docs/how-to-get-rokid-glasses.md)
+- Android Studio with `adb`
+- Python 3.12 with `uv`
+- Overshoot API key (`OVERSHOOT_API_KEY`)
+
+## Configuration
+
+<Steps>
+  <Step title="Configure the glasses app">
+    Set the backend base URL in `rokid/local.properties`:
+
+    ```properties
+    BACKEND_BASE_URL=http://<YOUR_BACKEND>
+    ```
+  </Step>
+  <Step title="Configure the backend">
+    ```sh
+    cd backend
+    cp .env.example .env
+    # Set OVERSHOOT_API_KEY in .env
+    ```
+  </Step>
+</Steps>
+
+## Optional Backend Overrides
+
+These environment variables let you tune inference behaviour without changing code. Default values are defined in `backend/session_manager.py`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `OVERSHOOT_API_URL` | `https://api.overshoot.ai/v0.2` | Overshoot API base URL. |
+| `OVERSHOOT_PROMPT` | `"You are observing a first-person POV. Describe the scene in second person. Write at most three short sentences."` | Inference prompt sent to the VLM. |
+| `OVERSHOOT_MODEL` | `Qwen/Qwen3-VL-30B-A3B-Instruct` | Overshoot model identifier. |
+| `OVERSHOOT_PROCESSING_TARGET_FPS` | `6` | Target frame rate for clip processing. |
+| `OVERSHOOT_PROCESSING_CLIP_LENGTH_SECONDS` | `0.5` | Duration of each processed clip. |
+| `OVERSHOOT_PROCESSING_DELAY_SECONDS` | `0.5` | Delay before each clip is sent for inference. |
+
+## Run the Backend
+
+```sh
+cd backend
+uv run --env-file .env fastapi dev main.py --host 0.0.0.0
+```
+
+## Run the Glasses App
+
+<Steps>
+  <Step title="Connect Rokid Glasses and enable Wi-Fi">
+    ```sh
+    adb devices                                           # confirm device is visible
+    adb shell cmd wifi status                             # check connection
+    adb shell cmd wifi set-wifi-enabled enabled
+    adb shell 'cmd wifi connect-network "NAME" wpa2 "PASSWORD"'
+    adb shell cmd wifi status                             # confirm connection
+    ```
+  </Step>
+  <Step title="Optional: wireless ADB">
+    ```sh
+    adb shell ip -f inet addr show wlan0   # check glasses IP
+    ping -c 5 -W 3 <IP>                    # first ping may time out
+    adb tcpip 5555                         # enable remote ADB mode
+    adb connect <IP>                       # connect over Wi-Fi
+    adb devices                            # verify remote connection
+    ```
+
+    After connecting wirelessly you can unplug the dev cable.
+  </Step>
+  <Step title="Build and run">
+    Open the `rokid/` directory in Android Studio, select Rokid Glasses as the target device, and run the app.
+
+    To rebuild manually after code changes:
+
+    ```sh
+    cd rokid && ./gradlew :app:assembleDebug
+    ```
+  </Step>
+</Steps>
+
+## Key Files
+
+| File | Description |
+|---|---|
+| `rokid/…/MainActivity.kt` | Temple-tap start/stop controls and rolling result log UI. |
+| `rokid/…/OvershootSessionClient.kt` | WebRTC offer/answer flow and backend WebSocket handling. |
+| `rokid/…/activity_main.xml` | Monochrome HUD layout with auto-scrolling log view. |
+| `backend/main.py` | FastAPI app lifecycle and HTTP/WebSocket route handlers. |
+| `backend/session_manager.py` | Overshoot session orchestration: REST create/delete, keepalive, WebSocket relay, reconnect/backoff, and env-driven processing config. |
+| `backend/.env.example` | Environment template with `OVERSHOOT_API_KEY` and optional overrides. |
+
+## Next Steps
+
+For a more advanced pattern built on the same Overshoot foundation, see the [Proactive Drink-making Coach](/examples/rokid-overshoot-openai-realtime). It adds OpenAI Realtime for spoken guidance, a recipe workflow, and server-authoritative HUD state, but uses the same WebRTC brokering and Overshoot session management patterns you see here.

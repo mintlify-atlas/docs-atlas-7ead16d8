@@ -1,0 +1,88 @@
+{
+  "projectType": "framework",
+  "projectName": "GlassKit",
+  "projectDescription": "An open-source toolkit for building AI-powered smart glasses apps that see, hear, and guide wearers in real time, starting with Rokid Glasses.",
+  "theme": "luma",
+  "primaryColor": "#2D7FF9",
+  "lightColor": "#EBF2FE",
+  "darkColor": "#1A4DB3",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "hardware-setup"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/app-architecture",
+              "concepts/hud-and-display",
+              "concepts/inputs",
+              "concepts/webrtc-streaming"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/openai-realtime",
+              "guides/object-detection",
+              "guides/proactive-perception",
+              "guides/voice-commands",
+              "guides/agent-skill"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/overview",
+              "examples/rokid-feature-demo",
+              "examples/rokid-openai-realtime",
+              "examples/rokid-rfdetr",
+              "examples/rokid-overshoot",
+              "examples/rokid-overshoot-openai-realtime"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Rokid Glasses Android SDK with HUD layout, touchpad input, and camera/mic access patterns",
+    "WebRTC media streaming from glasses to backend services via aiortc and Stream WebRTC",
+    "OpenAI Realtime API integration for low-latency voice-and-vision AI sessions",
+    "Overshoot VLM continuous inference for proactive, camera-driven perception loops",
+    "RF-DETR object detection with annotated frame injection into realtime model conversations",
+    "Offline Vosk voice commands mirroring touchpad gestures",
+    "Agent skill for Codex, Claude Code, and Cursor to build glasses apps autonomously",
+    "Runnable end-to-end examples covering assembly assistants, speedrun timers, and coaching apps"
+  ],
+  "publicApiSurface": [
+    "npx skills add RealComputer/GlassKit (agent skill install)",
+    "skills/glasskit/assets/rokid-hello-world (Android starter template)",
+    "ScreenController (base class for Rokid HUD screens)",
+    "HudViewportLayout / RokidHudViewportLayout (480x640 HUD wrapper)",
+    "NavigationInputMapper (touchpad KEYCODE_ENTER / DPAD / OnBackPressedCallback mapping)",
+    "VoiceCommandRecognizer (Vosk offline command words: select, back, next, previous)",
+    "POST /session (backend SDP broker for OpenAI Realtime)",
+    "POST /vision/session (backend WebRTC receiver for object detection / Overshoot)",
+    "WebSocket control channel (hud.state, session.start, session.stop events)",
+    "DataChannel vision-events / oai-events (normalized app-state JSON)",
+    "OpenAIRealtimeClient.kt (Android WebRTC client for OpenAI Realtime audio + data channel)",
+    "BackendVisionClient.kt (Android WebRTC client for camera-to-backend vision streaming)",
+    "OvershootSessionClient.kt (Android WebRTC client for Overshoot VLM inference)",
+    "BackendControlClient.kt (Android WebSocket client for backend session control)",
+    "Detection / DetectionSnapshot (normalized object detection result types)",
+    "session_manager.py (Python backend session lifecycle and wiring layer)",
+    "session_workflow.py (Python proactive workflow state machine)",
+    "CameraX back-camera binding pattern (1024x768 @ 15fps, landscape-to-portrait)",
+    "AudioRecord / JavaAudioDeviceModule Rokid mic configuration (16kHz mono, USAGE_MEDIA)",
+    "SDP normalization helper (normalize_sdp / normalizeSdp)"
+  ]
+}

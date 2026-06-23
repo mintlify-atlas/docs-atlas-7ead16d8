@@ -1,0 +1,155 @@
+---
+title: "GlassKit App Architecture: Four-Layer Design"
+sidebarTitle: "Architecture"
+description: "Understand how GlassKit apps are structured across the Rokid Android layer, WebRTC transport, backend services, and wearer feedback."
+---
+
+Every GlassKit app is organized around four cooperating layers: the Rokid Glasses Android app, a WebRTC media transport, a backend that drives AI logic, and the feedback loop that surfaces results back to the wearer. This page explains what each layer owns, how data flows between them, and where offline-capable pieces fit.
+
+## The Four Layers
+
+<CardGroup cols={2}>
+  <Card title="Rokid Glasses (Android)" icon="glasses">
+    Captures camera frames and microphone audio, handles touchpad gestures, and renders the monochrome HUD.
+  </Card>
+  <Card title="WebRTC Transport" icon="signal-stream">
+    Carries live media between the glasses, your backend, and upstream AI services over a peer-to-peer or relayed connection.
+  </Card>
+  <Card title="Backend" icon="server">
+    Coordinates session setup, workflow state, model calls, tool calls, and app-specific decisions.
+  </Card>
+  <Card title="Wearer Feedback" icon="eye">
+    Delivers real-time guidance via the HUD display, speakers, or data-channel events driving UI updates.
+  </Card>
+</CardGroup>
+
+---
+
+## Layer 1 — Rokid Glasses (Android)
+
+The Rokid Glasses Android app is the on-device half of your system. It owns:
+
+- **Camera capture** — rear-facing 1024×768 @ 15 fps via CameraX, with an Application-level back-camera limiter to avoid front-camera validation retries.
+- **Microphone capture** — 16 kHz mono PCM16 via `AudioRecord` or `JavaAudioDeviceModule` when WebRTC manages the audio path.
+- **Touchpad input** — four gestures (tap, double-tap, swipe forward, swipe backward) mapped to `KeyEvent` codes and `OnBackPressedCallback`.
+- **HUD rendering** — a 480×640 portrait monochrome display. Black pixels are transparent; white pixels appear green. Content is rendered with Android views inside a `HudViewportLayout`.
+
+The Android app is intentionally thin. It streams media outbound, handles input, and updates the HUD based on instructions that arrive from the backend over a data channel or WebSocket. It does not run AI models by default.
+
+<Note>
+  Rokid Glasses have less CPU and RAM than phones. Keep on-device logic efficient. Avoid heavy per-frame processing unless the feature specifically requires local inference.
+</Note>
+
+---
+
+## Layer 2 — WebRTC Transport
+
+WebRTC is the media highway between the glasses and everything else. The Android side creates a `PeerConnection`, adds camera and microphone tracks, then exchanges SDP with the backend to establish the session.
+
+Two integration shapes are common:
+
+<Tabs>
+  <Tab title="Backend Media Receiver">
+    Android sends an SDP offer directly to your Python or Node backend. The backend terminates the WebRTC connection, receives the video and audio tracks, runs inference or processing on them, and sends results back on a data channel.
+
+    ```
+    Glasses ──SDP offer──► Backend (aiortc)
+            ◄─SDP answer──
+            ══video/audio═►
+            ◄══data events═
+    ```
+  </Tab>
+  <Tab title="Backend Service Broker">
+    Android sends an SDP offer to your backend. The backend forwards it (or adapts it) to an upstream provider like OpenAI Realtime, then relays the provider's answer SDP back to Android. The backend also bridges control events between Android and the provider.
+
+    ```
+    Glasses ──SDP offer──► Backend ──session create──► Provider
+            ◄─SDP answer──         ◄─answer SDP──────
+            ══video/audio════════════════════════════►
+            ◄══events/audio════════════════════════
+    ```
+  </Tab>
+</Tabs>
+
+WebRTC uses non-trickle signaling in GlassKit examples: ICE gathering completes before the offer is sent, so both sides receive a complete SDP in one round-trip.
+
+---
+
+## Layer 3 — Backend
+
+The backend is where AI logic lives. Depending on the app, it may:
+
+- Receive live video frames from the WebRTC track and run a vision model (e.g., RF-DETR object detection, Overshoot scene description).
+- Connect to a speech-to-text or voice model (e.g., OpenAI Realtime) and broker audio between the glasses and the model.
+- Maintain workflow state — for example, tracking assembly steps, recognizing when one step is complete, and advancing to the next.
+- Invoke tools — querying a database, updating records, calling external APIs — and surface the results as HUD updates.
+
+The backend communicates results to Android over a WebRTC data channel (for sessions already connected) or a separate WebSocket for out-of-band control events.
+
+<Tip>
+  Python backends typically use `aiortc` to terminate WebRTC media. FastAPI works well as the HTTP + WebSocket host. See the [WebRTC Streaming](/concepts/webrtc-streaming) page for full backend patterns.
+</Tip>
+
+---
+
+## Layer 4 — Wearer Feedback
+
+The feedback layer closes the loop. Results from the backend reach the wearer through:
+
+- **HUD text and graphics** — updated via data-channel events that drive `ScreenController.render()` calls on the Android side.
+- **Spoken audio** — either streamed from a voice model over the WebRTC audio track, or played locally from the Android speaker.
+- **Navigation state** — the current active screen and available touchpad actions update as the workflow advances.
+
+The wearer interacts back through touchpad gestures or microphone input, which feeds into the next backend decision cycle.
+
+---
+
+## Data Flow at a Glance
+
+```
+┌─────────────────────────────────────┐
+│         Rokid Glasses (Android)     │
+│                                     │
+│  Camera ──► WebRTC video track ─────┼──► Backend
+│  Mic    ──► WebRTC audio track ─────┼──►   │
+│  Touchpad ─► ScreenController ──────┼──►   │ (AI / models / tools)
+│                                     │◄─────┘
+│  HUD ◄── render() ◄── data channel  │
+│  Speaker ◄── remote audio track     │
+└─────────────────────────────────────┘
+```
+
+---
+
+## Offline-Capable Pieces
+
+Not every feature requires a live backend connection. Some pieces can run fully on the device:
+
+<CardGroup cols={2}>
+  <Card title="Vosk Voice Commands" icon="microphone">
+    Offline speech recognition for short command words (start, stop, confirm). Useful as a fallback when Wi-Fi is unavailable or as a complement to touchpad navigation.
+  </Card>
+  <Card title="Local Vision / Privacy Processing" icon="shield">
+    CameraX frames can be processed on-device for privacy filtering or simple CV tasks before streaming, so sensitive data never leaves the glasses.
+  </Card>
+</CardGroup>
+
+<Note>
+  Rokid Glasses do not have cellular networking. All networked features depend on device Wi-Fi or a phone companion app. Design offline fallbacks for environments with unreliable connectivity.
+</Note>
+
+---
+
+## Example Apps
+
+The GlassKit repository includes several reference implementations that show this architecture in action:
+
+| Example | Layers in use |
+|---|---|
+| `rokid-feature-demo` | Android layer only — touchpad, camera, mic, HUD, offline Vosk |
+| `rokid-overshoot` | Android + WebRTC + backend receiver (Overshoot scene description) |
+| `rokid-openai-realtime` | Android + WebRTC + backend broker (OpenAI Realtime voice) |
+| `rokid-rfdetr` | Android + WebRTC + backend receiver (RF-DETR object detection) |
+| `rokid-overshoot-openai-realtime` | All four layers — video inference, voice, workflow state, HUD guidance |
+
+Each example directory contains a README with setup steps and environment variables.

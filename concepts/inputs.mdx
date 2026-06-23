@@ -1,0 +1,311 @@
+---
+title: "Rokid Inputs: Touchpad, Camera, and Microphone"
+sidebarTitle: "Inputs"
+description: "Configure Rokid Glasses touchpad gestures, CameraX back-camera binding at 1024×768, and AudioRecord microphone capture for streaming or local processing."
+---
+
+Rokid Glasses have three input sources: a temple touchpad for navigation, a rear-facing camera for vision, and built-in microphones for audio. Each has device-specific constraints that differ from a standard Android phone. This page covers the gesture table, the `NavigationInputMapper` implementation, CameraX binding for the rear camera, and `AudioRecord` / `JavaAudioDeviceModule` microphone configuration.
+
+---
+
+## Touchpad Gestures
+
+The Rokid Glasses touchpad supports exactly four gestures. They map to standard Android input events, so no custom SDK is needed.
+
+| Rokid gesture | Android event | Typical app action |
+|---|---|---|
+| Tap | `KeyEvent.KEYCODE_ENTER` | Select / confirm |
+| Double-tap | `OnBackPressedCallback` | Back / cancel |
+| Swipe forward | `KeyEvent.KEYCODE_DPAD_DOWN` | Next / move focus forward |
+| Swipe backward | `KeyEvent.KEYCODE_DPAD_UP` | Previous / move focus backward |
+
+<Warning>
+  Always keep double-tap available on the root screen so wearers can exit the app. If your root screen consumes `OnBackPressedCallback` for another purpose, provide an alternative exit path.
+</Warning>
+
+---
+
+## NavigationInputMapper
+
+`NavigationInputMapper` from the starter app wraps both Rokid touchpad key events and phone/emulator touchscreen gestures behind a single callback interface. Pass it into your Activity and forward the relevant system calls:
+
+```kotlin
+class NavigationInputMapper(
+    context: Context,
+    private val onSelect: () -> Unit,
+    private val onBack: () -> Unit,
+    private val onNext: () -> Unit,
+    private val onPrevious: () -> Unit
+) {
+    companion object {
+        private const val TOUCHSCREEN_FLING_DISTANCE_THRESHOLD_DP = 56f
+    }
+
+    private val touchscreenFlingDistanceThresholdPx =
+        TOUCHSCREEN_FLING_DISTANCE_THRESHOLD_DP * context.resources.displayMetrics.density
+
+    private val touchscreenGestureDetector = GestureDetector(
+        context,
+        object : GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                onSelect()
+                return true
+            }
+
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                onBack()
+                return true
+            }
+
+            override fun onFling(
+                e1: MotionEvent?,
+                e2: MotionEvent,
+                velocityX: Float,
+                velocityY: Float
+            ): Boolean {
+                val start = e1 ?: return false
+                val horizontalMovement = e2.x - start.x
+                val verticalMovement = e2.y - start.y
+                if (!isHorizontalTouchscreenFling(horizontalMovement, verticalMovement)) {
+                    return false
+                }
+                if (horizontalMovement > 0f) onNext() else onPrevious()
+                return true
+            }
+        }
+    )
+
+    // Phone/emulator touchscreen input.
+    fun onTouchEvent(event: MotionEvent): Boolean =
+        touchscreenGestureDetector.onTouchEvent(event)
+
+    // Rokid touchpad gesture input.
+    fun onKeyUp(keyCode: Int): Boolean {
+        return when (keyCode) {
+            KeyEvent.KEYCODE_ENTER -> { onSelect(); true }
+            KeyEvent.KEYCODE_DPAD_DOWN -> { onNext(); true }
+            KeyEvent.KEYCODE_DPAD_UP -> { onPrevious(); true }
+            else -> false
+        }
+    }
+
+    private fun isHorizontalTouchscreenFling(
+        horizontalMovement: Float,
+        verticalMovement: Float
+    ): Boolean {
+        val horizontalDistance = abs(horizontalMovement)
+        val verticalDistance = abs(verticalMovement)
+        return horizontalDistance >= touchscreenFlingDistanceThresholdPx &&
+            horizontalDistance > verticalDistance
+    }
+}
+```
+
+Wire it into your Activity:
+
+```kotlin
+// In onCreate
+val inputMapper = NavigationInputMapper(
+    context = this,
+    onSelect = { activeController.handleAction(NavigationAction.SELECT) },
+    onBack = { activeController.handleAction(NavigationAction.BACK) },
+    onNext = { activeController.handleAction(NavigationAction.NEXT) },
+    onPrevious = { activeController.handleAction(NavigationAction.PREVIOUS) }
+)
+
+// Forward Activity callbacks
+override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean =
+    inputMapper.onKeyUp(keyCode) || super.onKeyUp(keyCode, event)
+
+override fun onTouchEvent(event: MotionEvent): Boolean =
+    inputMapper.onTouchEvent(event) || super.onTouchEvent(event)
+```
+
+Double-tap back is handled through `OnBackPressedCallback` rather than `onKeyUp`, so it integrates with the system back stack:
+
+```kotlin
+onBackPressedDispatcher.addCallback(this) {
+    activeController.handleAction(NavigationAction.BACK)
+}
+```
+
+---
+
+## Camera Access
+
+### Application-Level Back-Camera Limiter
+
+Rokid Glasses expose only the rear/outward camera. Configure CameraX at the `Application` level to limit available cameras to `DEFAULT_BACK_CAMERA` before any `ProcessCameraProvider` is initialized. This prevents CameraX from performing front-camera validation retries on hardware that reports no front camera:
+
+```kotlin
+import android.app.Application
+import androidx.camera.camera2.Camera2Config
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.CameraXConfig
+
+class RokidApplication : Application(), CameraXConfig.Provider {
+    override fun getCameraXConfig(): CameraXConfig {
+        return CameraXConfig.Builder.fromConfig(Camera2Config.defaultConfig())
+            .setAvailableCamerasLimiter(CameraSelector.DEFAULT_BACK_CAMERA)
+            .build()
+    }
+}
+```
+
+Register it in `AndroidManifest.xml`:
+
+```xml
+<application
+    android:name=".RokidApplication"
+    ...>
+```
+
+<Note>
+  If your app already has a custom `Application` class, implement `CameraXConfig.Provider` there instead of creating a second `Application` subclass.
+</Note>
+
+### bindRokidCamera
+
+The practical capture floor on Rokid Glasses is **1024×768 @ 15 fps**. Request this size — not `768x1024` — and set `targetRotation` so CameraX applies the correct transform for the portrait HUD.
+
+```kotlin
+private val rokidCameraSize = Size(1024, 768)
+private val rokidCameraFps = Range(15, 15)
+
+@OptIn(ExperimentalCamera2Interop::class)
+private fun bindRokidCamera(
+    lifecycleOwner: LifecycleOwner,
+    cameraProvider: ProcessCameraProvider,
+    previewView: PreviewView
+) {
+    previewView.implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+    previewView.scaleType = PreviewView.ScaleType.FIT_CENTER
+
+    val previewBuilder = Preview.Builder()
+        .setTargetRotation(previewView.display?.rotation ?: Surface.ROTATION_0)
+        .setResolutionSelector(
+            ResolutionSelector.Builder()
+                .setResolutionStrategy(
+                    ResolutionStrategy(
+                        rokidCameraSize,
+                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                    )
+                )
+                .build()
+        )
+
+    Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(
+        CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
+        rokidCameraFps
+    )
+
+    val preview = previewBuilder.build().also {
+        it.setSurfaceProvider(previewView.surfaceProvider)
+    }
+
+    cameraProvider.unbindAll()
+    cameraProvider.bindToLifecycle(
+        lifecycleOwner,
+        CameraSelector.DEFAULT_BACK_CAMERA,
+        preview
+    )
+}
+```
+
+<Warning>
+  Do not rely on the Camera2 HAL accepting sub-15 fps requests on Rokid. To send frames at a lower rate downstream (e.g., 5 fps to a WebRTC track), capture at 15 fps and throttle using `adaptOutputFormat` or processing-side frame dropping. See [WebRTC Streaming](/concepts/webrtc-streaming) for the `adaptOutputFormat` pattern.
+</Warning>
+
+Request the `CAMERA` permission before calling `bindRokidCamera`, and call `cameraProvider.unbindAll()` when the camera screen is no longer visible.
+
+---
+
+## Microphone Access
+
+### Direct PCM Capture with AudioRecord
+
+Use `AudioRecord` when you need raw PCM bytes — for example, to feed a local speech recognizer or to build your own audio pipeline. Rokid-specific choices are `MediaRecorder.AudioSource.MIC` and mono capture at 16 kHz:
+
+```kotlin
+private const val ROKID_MIC_SAMPLE_RATE_HZ = 16_000
+private const val ROKID_MIC_BUFFER_MS = 200
+
+val minBufferBytes = AudioRecord.getMinBufferSize(
+    ROKID_MIC_SAMPLE_RATE_HZ,
+    AudioFormat.CHANNEL_IN_MONO,
+    AudioFormat.ENCODING_PCM_16BIT
+)
+require(minBufferBytes > 0) { "Invalid microphone buffer size: $minBufferBytes" }
+
+val record = AudioRecord(
+    MediaRecorder.AudioSource.MIC,
+    ROKID_MIC_SAMPLE_RATE_HZ,
+    AudioFormat.CHANNEL_IN_MONO,
+    AudioFormat.ENCODING_PCM_16BIT,
+    maxOf(minBufferBytes, ROKID_MIC_SAMPLE_RATE_HZ * ROKID_MIC_BUFFER_MS / 1000 * 2)
+)
+
+if (record.state != AudioRecord.STATE_INITIALIZED) {
+    record.release()
+    error("Microphone failed to initialize: state=${record.state}")
+}
+
+record.startRecording()
+if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+    record.release()
+    error("Microphone did not start recording")
+}
+```
+
+Run `AudioRecord.read(...)` on a background thread with `Process.THREAD_PRIORITY_AUDIO`, then stop and release the recorder when capture ends.
+
+### JavaAudioDeviceModule for WebRTC
+
+When WebRTC owns the audio path (e.g., streaming mic audio over a peer connection), configure `JavaAudioDeviceModule` with the same Rokid-friendly settings. Use `USAGE_MEDIA` and disable hardware AEC/NS to avoid the vendor VOIP path during simultaneous capture and playback:
+
+```kotlin
+JavaAudioDeviceModule.builder(context)
+    .setSampleRate(16_000)
+    .setUseHardwareAcousticEchoCanceler(false)
+    .setUseHardwareNoiseSuppressor(false)
+    .setUseStereoInput(false)
+    .setUseStereoOutput(false)
+    .setAudioAttributes(
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+    )
+    .setAudioSource(MediaRecorder.AudioSource.MIC)
+    .createAudioDeviceModule().apply {
+        setMicrophoneMute(false)
+        setSpeakerMute(false)
+    }
+```
+
+Pass the resulting module to `PeerConnectionFactory.builder().setAudioDeviceModule(...)` before calling `createPeerConnectionFactory()`.
+
+<Tip>
+  Request the `RECORD_AUDIO` permission before starting any microphone capture path. For receive-only WebRTC sessions (remote audio playback only, no local mic), you do not need `RECORD_AUDIO`.
+</Tip>
+
+---
+
+## Input Summary
+
+<CardGroup cols={2}>
+  <Card title="Touchpad" icon="hand-pointer">
+    Four gestures only. Use `NavigationInputMapper` to handle both Rokid key events and phone/emulator touch events with the same callbacks. Double-tap routes through `OnBackPressedCallback`.
+  </Card>
+  <Card title="Camera" icon="camera">
+    CameraX with Application-level back-camera limiter. Request 1024×768 @ 15 fps, set target rotation, and unbind when not visible. Do not request sub-15 fps from the HAL.
+  </Card>
+  <Card title="Microphone (PCM)" icon="microphone">
+    `AudioRecord` with 16 kHz, mono, PCM16. Check `STATE_INITIALIZED` and `RECORDSTATE_RECORDING` before trusting the recorder. Read on a background thread at `THREAD_PRIORITY_AUDIO`.
+  </Card>
+  <Card title="Microphone (WebRTC)" icon="signal-stream">
+    `JavaAudioDeviceModule` with `USAGE_MEDIA`, hardware AEC/NS disabled, 16 kHz mono. Pass to `PeerConnectionFactory` so WebRTC owns the audio device lifecycle.
+  </Card>
+</CardGroup>

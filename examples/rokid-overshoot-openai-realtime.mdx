@@ -1,0 +1,241 @@
+---
+title: "Proactive Drink Coach: Overshoot and OpenAI Realtime"
+sidebarTitle: "Drink Coach"
+description: "Proactive Rokid coach: Overshoot scans ingredients, OpenAI Realtime speaks each step, and a FastAPI backend drives a JSON recipe workflow authoritatively."
+---
+
+The `rokid-overshoot-openai-realtime` example turns Rokid Glasses into a proactive drink-making assistant. Instead of waiting for the wearer to ask questions, the backend scans what is on the table, picks the best matching recipe from a data-driven catalog, and then guides each step with short spoken instructions while watching what the wearer does. If the wearer picks up the wrong bottle, the assistant corrects them in real time. The interaction is meant to feel more like a helpful person standing next to you than a voice assistant waiting for prompts.
+
+It is also the most architecturally complete GlassKit example, combining four concurrent connections, a server-authoritative workflow state machine, Overshoot VLM inference with prompt switching per step, OpenAI Realtime sideband speech control, and a data-driven recipe format.
+
+## What the App Does
+
+<Steps>
+  <Step title="Scan ingredients">
+    At session start the backend activates the inventory detector prompt on Overshoot. It waits for two consecutive identical normalized ingredient arrays before proceeding, filtering out transient detections.
+  </Step>
+  <Step title="Select a recipe">
+    Once the inventory stabilizes, the backend asks OpenAI Realtime to choose a recipe by calling `list_recipes` then `activate_recipe` using the detected ingredient names and the recipe filename keywords.
+  </Step>
+  <Step title="Guide each step">
+    The backend loads the chosen recipe JSON, switches to the first guided step, and patches the active Overshoot prompt to the step's detector. It evaluates structured VLM outputs to decide whether to advance, correct, or speak progress updates.
+  </Step>
+  <Step title="Correct mistakes">
+    If the wearer picks up the wrong ingredient, the backend detects the mismatch and sends an exact correction line to OpenAI Realtime via the sideband WebSocket. OpenAI speaks it over WebRTC.
+  </Step>
+  <Step title="Deliver spoken guidance">
+    OpenAI Realtime speaks to the glasses over WebRTC audio. The glasses render the latest transcript on the HUD. When the backend starts a new speech turn (`speech_epoch` changes), stale transcript text is cleared.
+  </Step>
+</Steps>
+
+## Architecture
+
+### Connection Graph
+
+```
+Rokid Glasses (Android)
+  ├── Control WebSocket ←→ Backend (FastAPI)
+  │     session lifecycle, HUD state, debug gestures
+  ├── Vision WebRTC (video) → Overshoot (direct, brokered by backend)
+  ├── Audio WebRTC (audio + data) ←→ OpenAI Realtime (direct, brokered by backend)
+  │
+Backend (FastAPI)
+  ├── HTTP → Overshoot  (stream create, prompt patch)
+  ├── WebSocket ←→ Overshoot  (inference events, keepalive)
+  └── WebSocket ←→ OpenAI Realtime sideband
+        (recipe selection tool calls, exact speech lines)
+```
+
+The glasses own only the media connections and the HUD renderer. The backend is authoritative for all workflow decisions.
+
+### End-to-End Session Flow
+
+| Step | What happens |
+|---|---|
+| 1. App launch | Rokid opens the backend control WebSocket and receives a server-created `session_id`. |
+| 2. User tap | Rokid sends `session.start` on the control socket. |
+| 3. Media setup | Rokid sends vision SDP offer to `/session/{id}/vision` and audio SDP offer to `/session/{id}/realtime`. |
+| 4. Stream ownership | Backend creates the Overshoot stream and OpenAI Realtime call; starts the Overshoot WebSocket + keepalive and the OpenAI sideband WebSocket. |
+| 5. Inventory scan | Backend activates the inventory detector prompt on Overshoot and waits for two consecutive identical normalized ingredient arrays. |
+| 6. Recipe selection | Backend asks OpenAI Realtime to call `list_recipes` then `activate_recipe`; loads the chosen recipe JSON and switches to the first guided step. |
+| 7. Guided workflow | Backend patches the active Overshoot prompt for each step, evaluates structured results, and decides whether to advance, correct, or speak progress. Sends `hud.state` updates to Rokid and exact speech instructions to the OpenAI sideband. |
+| 8. Speech delivery | OpenAI Realtime speaks to Rokid over WebRTC; Rokid renders only the latest transcript, keyed by `speech_epoch`. |
+| 9. App background / close | Rokid closes the control WebSocket on `onStop`; backend destroys session state and tears down both media runtimes. The next foreground reconnect gets a fresh `session_id`. |
+
+### Implementation Contracts
+
+<Tabs>
+  <Tab title="Client contract">
+    The Android client is intentionally thin:
+
+    - Owns HUD rendering, gesture input, runtime permission handling, and the two WebRTC links.
+    - Must **not** choose recipes, interpret vision results, advance workflow steps, or decide what speech to play.
+    - Must render only the latest transcript and clear stale text when `speech_epoch` changes.
+  </Tab>
+  <Tab title="Backend contract">
+    The FastAPI backend is authoritative:
+
+    - Must remain authoritative for session lifecycle, phases, recipe loading, prompt switching, step progression, HUD state, and exact speech decisions.
+    - Must serialize per-session workflow through one session event loop.
+    - Recipe selection must happen only after the inventory scan stabilizes, using detected ingredient names and recipe filenames.
+  </Tab>
+  <Tab title="External service contract">
+    - Overshoot provides structured outputs for the active prompt; the backend decides what those outputs mean.
+    - OpenAI Realtime does only two things: choose a recipe from filename IDs, and speak exact backend-provided lines.
+    - OpenAI Realtime must **not** invent workflow decisions or drive step transitions.
+  </Tab>
+</Tabs>
+
+## Requirements
+
+- [Rokid Glasses + dev cable](https://github.com/RealComputer/GlassKit/blob/main/docs/how-to-get-rokid-glasses.md)
+- Android Studio with `adb`
+- Python 3.12 with `uv`
+- Overshoot API key (`OVERSHOOT_API_KEY`)
+- OpenAI API key (`OPENAI_API_KEY`)
+
+## Configuration
+
+<Steps>
+  <Step title="Configure the glasses app">
+    Set the backend base URL in `rokid/local.properties`:
+
+    ```properties
+    BACKEND_BASE_URL=http://<YOUR_BACKEND>
+    ```
+  </Step>
+  <Step title="Configure the backend">
+    ```sh
+    cd backend
+    cp .env.example .env
+    # Set OVERSHOOT_API_KEY and OPENAI_API_KEY in .env
+    ```
+  </Step>
+</Steps>
+
+## Optional Backend Overrides
+
+| Variable | Default | Description |
+|---|---|---|
+| `OVERSHOOT_API_URL` | `https://api.overshoot.ai/v0.2` | Overshoot API base URL. |
+| `OVERSHOOT_MODEL` | `Qwen/Qwen3.5-27B` | Overshoot model identifier. |
+| `OPENAI_REALTIME_MODEL` | `gpt-realtime-1.5` | OpenAI Realtime model identifier. |
+
+Default values for these and the processing config are defined in `backend/session_constants.py`.
+
+## Run the Backend
+
+```sh
+cd backend
+uv run --env-file .env fastapi dev main.py --host 0.0.0.0
+```
+
+## Run the Glasses App
+
+<Steps>
+  <Step title="Connect Rokid Glasses and enable Wi-Fi">
+    ```sh
+    adb devices
+    adb shell cmd wifi status
+    adb shell cmd wifi set-wifi-enabled enabled
+    adb shell 'cmd wifi connect-network "NAME" wpa2 "PASSWORD"'
+    adb shell cmd wifi status
+    ```
+  </Step>
+  <Step title="Optional: wireless ADB">
+    ```sh
+    adb shell ip -f inet addr show wlan0
+    ping -c 5 -W 3 <IP>
+    adb tcpip 5555
+    adb connect <IP>
+    adb devices
+    ```
+  </Step>
+  <Step title="Build and run">
+    Open the `rokid/` directory in Android Studio, select Rokid Glasses, and run the app.
+
+    ```sh
+    cd rokid && ./gradlew :app:assembleDebug
+    ```
+  </Step>
+</Steps>
+
+## Gesture Controls
+
+| Gesture | `KeyEvent` | Action |
+|---|---|---|
+| Temple tap | `KEYCODE_ENTER` | Start or stop the session. |
+| Swipe forward | `KEYCODE_DPAD_UP` | Advance one internal debug step. |
+| Swipe backward | `KEYCODE_DPAD_DOWN` | Move back one internal debug step. |
+
+## Recipe Files
+
+Recipes live in `backend/recipes/`. Each recipe is a JSON file whose filename keywords are used by OpenAI Realtime to select the right recipe from the detected ingredients. The current example recipe is `orange-juice-blue-gatorade-lime-mocktail.json`.
+
+A recipe file defines a display name, a starting step ID, a flat task list, a set of named detectors (each a VLM prompt targeting one structured output field), and an ordered list of steps. Each step references a detector, specifies an evaluation mode, and provides speech lines for entering, mismatches, and success:
+
+```json
+{
+  "id": "orange-juice-blue-gatorade-lime-mocktail",
+  "display_name": "Orange Blue Mocktail",
+  "start_step_id": "pick_orange_bottle",
+  "tasks": [
+    { "id": "orange_juice", "text": "Add orange juice to halfway" },
+    { "id": "ice",          "text": "Add a few scoops of ice" },
+    { "id": "gatorade",     "text": "Fill with Gatorade" },
+    { "id": "lime",         "text": "Top with a lime wheel" }
+  ],
+  "detectors": {
+    "bottle_color": {
+      "field": "color",
+      "prompt": "Return JSON with a single `color` field. Return the bottle color as orange, red, or blue only when the bottle is clearly being held by a hand in the air..."
+    }
+  },
+  "steps": [
+    {
+      "id": "pick_orange_bottle",
+      "task_id": "orange_juice",
+      "evaluation_mode": "match_value",
+      "detector_key": "bottle_color",
+      "expected_value": "orange",
+      "ignored_values": ["unknown"],
+      "speak_on_observation_change_only": true,
+      "on_enter_speech": "Let's make a mocktail! Grab the orange bottle to get us started.",
+      "mismatch_speech": "That's not the orange bottle. Grab the orange bottle.",
+      "success_speech": "Nice. Pour the orange juice into the glass.",
+      "next_step_id": "pour_orange_juice"
+    }
+  ]
+}
+```
+
+### Evaluation Modes
+
+Evaluation modes are defined in `backend/session_constants.py` and control how the backend interprets the VLM's structured output for each step:
+
+| Mode | When to use |
+|---|---|
+| `match_value` | Advance when the detector field equals `expected_value`. |
+| `numeric_threshold_with_progress_once` | Advance once a numeric field crosses a threshold; speak progress updates along the way. |
+| `count_rising_edges_true` | Count discrete true events (e.g., a momentary action repeated N times). |
+| `enum_progress_once_then_complete` | Speak on each new enum value seen, complete on a terminal value. |
+| `momentary_true_complete` | Advance immediately on the first `true` result. |
+
+## Key Backend Files
+
+| File | Description |
+|---|---|
+| `backend/main.py` | FastAPI lifecycle and the control / vision / realtime routes. |
+| `backend/session_manager.py` | Composition layer wiring `SessionWorkflowMixin` and `SessionRuntimeMixin` with shared HTTP clients and session registry. |
+| `backend/session_workflow.py` | Workflow state machine: recipe activation, step evaluation, and HUD publishing. |
+| `backend/session_runtime.py` | Overshoot and OpenAI runtime creation, sideband transport, keepalive, and speech / event sending. |
+| `backend/recipe_catalog.py` | Recipe JSON loading and catalog indexing. |
+| `backend/session_types.py` | `ControlSession` and `StepRuntimeState` dataclasses. |
+| `backend/session_constants.py` | Shared constants: phase names, default model IDs, inventory scan prompt, OpenAI session instructions, and evaluation mode literals. |
+| `backend/session_helpers.py` | Pure helper functions used by the orchestrator. |
+| `backend/recipes/*.json` | Data-driven workflow definitions. Filename keywords drive recipe selection. |
+
+## Related Examples
+
+- [Live Scene Reader (Overshoot)](/examples/rokid-overshoot) — minimal Overshoot-only example; the streaming and relay patterns used here come directly from it.
+- [IKEA Assembly Assistant](/examples/rokid-openai-realtime) — simpler OpenAI Realtime example with tool calls but no Overshoot vision.

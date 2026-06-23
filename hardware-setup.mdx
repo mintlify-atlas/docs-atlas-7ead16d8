@@ -1,0 +1,195 @@
+---
+title: "Rokid Glasses Hardware Setup and ADB Configuration"
+sidebarTitle: "Hardware Setup"
+description: "Source Rokid Glasses and the dev cable, connect via ADB, configure Wi-Fi for wireless debugging, and set up a phone or emulator for testing without hardware."
+---
+
+Rokid Glasses are Android-based smart glasses with an outward-facing camera, a monochrome HUD, microphones, speakers, and a temple touchpad — and no touchscreen. This page covers where to get the hardware, how to connect via ADB for development, how to configure Wi-Fi for wireless debugging, common build and install commands, and how to set up a phone or emulator when you want to test without the glasses in hand.
+
+## Hardware Overview
+
+Rokid Glasses run Android and can be developed for like any Android device. A few hardware characteristics shape how you build:
+
+| Feature | Detail |
+| --- | --- |
+| Display | Green monochrome binocular HUD, 480×640 portrait resolution |
+| Camera | Outward-facing; captures what the wearer sees |
+| Input | Temple touchpad — tap, double-tap, swipe forward, swipe backward |
+| Audio | Microphones and speaker |
+| Connectivity | Wi-Fi only; no cellular, no USB data without dev cable |
+| Touchscreen | None |
+
+<Note>
+  On the HUD, black renders as transparent and white renders as green. Use black backgrounds with white foregrounds for standard UI; other colors render as green, transparent, or intermediate brightness levels.
+</Note>
+
+## Getting Rokid Glasses
+
+Start with the official product page:
+
+- [global.rokid.com/products/rokid-glasses](https://global.rokid.com/products/rokid-glasses)
+
+If Rokid does not ship to your location, check third-party listings on eBay. If you are outside China, make sure the listing specifies the global or international version.
+
+## Getting the Development Cable
+
+The dev cable is the easiest way to upload APKs and debug apps on-device. It gives you a direct ADB connection over a magnetic USB-A connector.
+
+Check the official page first:
+
+- [global.rokid.com/products/rokid-glasses-prototype](https://global.rokid.com/products/rokid-glasses-prototype?variant=45116904439987)
+
+If the price looks unreasonably high, the cable is likely out of stock. Alternative sources:
+
+- **Shenzhen Lab** — [shop.shenzhenlab.com](https://shop.shenzhenlab.com/products/magnetic-usb-a-programming-debug-cable?variant=46699787518146)
+- **AliExpress** — search for the Rokid Glasses dev cable or magnetic USB-A debug cable
+- **Taobao**
+- **DIY** — community build guide at [reddit.com/r/rokid_official](https://www.reddit.com/r/rokid_official/comments/1sd58u2/rokid_dev_cable_diy/)
+
+## APK Upload Without the Dev Cable
+
+If you do not have the dev cable, you can still install APKs using community tools. These do not give you a direct ADB connection, so debugging is harder:
+
+- [RokidApkUploader](https://github.com/Miniontoby/RokidApkUploader)
+- [pyrokid_cxr_clientm](https://github.com/Miniontoby/pyrokid_cxr_clientm)
+- [Rokid-APKs](https://github.com/Anezium/Rokid-APKs)
+
+<Warning>
+  Without a direct ADB connection, `adb logcat` and interactive debugging are not available. For serious development, the dev cable is strongly recommended.
+</Warning>
+
+---
+
+## ADB Connection
+
+<Steps>
+  <Step title="Connect via cable">
+    Plug the dev cable into both the glasses and your development machine. Confirm the device is visible:
+
+    ```sh
+    adb devices
+    ```
+
+    You should see the glasses listed as a device. If not, check that `adb` is installed (it ships with Android Studio) and that the cable is fully seated.
+  </Step>
+  <Step title="Check Wi-Fi status (optional)">
+    If you want to switch to wireless ADB after the initial cable connection, first confirm Wi-Fi is enabled on the device:
+
+    ```sh
+    adb shell cmd wifi status
+    ```
+  </Step>
+  <Step title="Enable Wi-Fi and join a network (if needed)">
+    If Wi-Fi is disabled or not connected, enable it and join your development network:
+
+    ```sh
+    adb shell cmd wifi set-wifi-enabled enabled
+    adb shell 'cmd wifi connect-network "NETWORK_NAME" wpa2 "NETWORK_PASSWORD"'
+    adb shell cmd wifi status
+    ```
+
+    Replace `NETWORK_NAME` and `NETWORK_PASSWORD` with your actual network credentials.
+  </Step>
+  <Step title="Switch to wireless ADB">
+    Once the device is on the same network as your development machine, switch to a wireless ADB connection so you can unplug the cable:
+
+    ```sh
+    adb shell ip route get 1.1.1.1 | grep -oE 'src [0-9.]+' | awk '{print $2}'
+    adb tcpip 5555
+    adb connect DEVICE_IP:5555
+    adb devices
+    ```
+
+    Replace `DEVICE_IP` with the IP address printed by the first command.
+  </Step>
+</Steps>
+
+---
+
+## Common ADB Commands
+
+Once connected (by cable or wirelessly), these commands cover the typical development loop:
+
+<CodeGroup>
+```sh Build
+./gradlew :app:build
+```
+
+```sh Install
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+```sh Launch
+adb shell am start -n com.example.example/.MainActivity
+```
+
+```sh Full logcat
+adb logcat -c && adb logcat -v time
+```
+
+```sh App-only logcat
+adb logcat -v time --pid "$(adb shell pidof -s com.example.example)"
+```
+</CodeGroup>
+
+Replace `com.example.example` with your app's package name.
+
+---
+
+## Runtime Permissions on Device
+
+Physical Rokid Glasses do not show an interactive Android permission dialog in the HUD. Runtime permission requests on-device behave as if they were accepted automatically.
+
+<Note>
+  Keep your normal Android runtime permission request code in place. It is required for phone and emulator testing, where the standard permission dialog does appear.
+</Note>
+
+---
+
+## Phone and Emulator Testing
+
+You can test most app flows on an Android phone or emulator before putting the glasses on. This is useful for rapid iteration, but confirm final behavior on physical Rokid Glasses — especially for camera and microphone, which are often unstable in the emulator.
+
+The Rokid Hello World starter app includes a viewport wrapper and touchpad navigation mapping with touchscreen controls, so phone and emulator testing works with the same codebase.
+
+### Touchpad Controls Reference
+
+| Intent | Rokid Glasses touchpad | Android phone / emulator touchscreen |
+| --- | --- | --- |
+| Select / OK | Tap | Tap |
+| Back / cancel | Double-tap | Double-tap |
+| Next | Swipe forward | Swipe right |
+| Previous | Swipe backward | Swipe left |
+
+### Emulator Setup
+
+<Steps>
+  <Step title="Set environment variables">
+    These variables configure the AVD name, Android API level, ABI for your machine architecture, system image, and device profile:
+
+    ```sh
+    AVD=Test
+    API=36
+    ABI=$([ "$(uname -m)" = "arm64" ] && echo "arm64-v8a" || echo "x86_64")
+    IMG="system-images;android-$API;google_apis;$ABI"
+    DEVICE=pixel_9a
+    ```
+  </Step>
+  <Step title="Install the system image and create the AVD">
+    ```sh
+    sdkmanager "$IMG"
+    echo no | avdmanager create avd -n "$AVD" -k "$IMG" --device "$DEVICE"
+    ```
+  </Step>
+  <Step title="Launch the emulator">
+    Pass `-allow-host-audio` to route audio through your machine and `-camera-back webcam0` to use your webcam as the back camera:
+
+    ```sh
+    emulator @"$AVD" -allow-host-audio -camera-back webcam0
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  `sdkmanager` and `avdmanager` are included with Android Studio's SDK tools. If the commands are not found, add the Android SDK's `cmdline-tools/latest/bin` directory to your `PATH`.
+</Tip>

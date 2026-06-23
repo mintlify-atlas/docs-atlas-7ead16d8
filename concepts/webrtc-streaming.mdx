@@ -1,0 +1,426 @@
+---
+title: "WebRTC Streaming: Android to Backend Media Pipeline"
+sidebarTitle: "WebRTC"
+description: "Set up Stream WebRTC on Rokid Glasses: PeerConnectionFactory, video capture, SDP offer/answer flow, data channels, ICE, and Python backend patterns."
+---
+
+WebRTC is the media transport layer in GlassKit apps. It carries live camera and microphone streams from the Rokid Glasses to a backend (or upstream AI service), and can return audio and data-channel events in the opposite direction. This page covers the full Android-side setup — from the `PeerConnectionFactory` to the SDP exchange, data channels, and lifecycle — plus the two most common Python backend patterns.
+
+---
+
+## Integration Shapes
+
+GlassKit supports two high-level patterns for WebRTC sessions:
+
+<Tabs>
+  <Tab title="Backend Media Receiver">
+    Android sends an SDP offer to your own backend. The backend (Python with `aiortc`) terminates the WebRTC connection, receives video and audio tracks directly, runs inference, and sends results back over a data channel.
+
+    **Use this when:** you own the media pipeline — running object detection, scene description, transcription, or recording on your own infrastructure.
+  </Tab>
+  <Tab title="Backend Service Broker">
+    Android sends an SDP offer to your backend. The backend adapts it into a vendor-specific session (e.g., OpenAI Realtime), relays the vendor's SDP answer back to Android, and bridges events between the vendor and Android.
+
+    **Use this when:** a hosted AI service provides its own WebRTC endpoint, and your backend coordinates the handshake.
+  </Tab>
+</Tabs>
+
+---
+
+## Android Setup
+
+### Dependency
+
+```kotlin
+implementation("io.getstream:stream-webrtc-android:1.3.10")
+```
+
+Supporting libraries (use your project's existing versions if available):
+
+```kotlin
+implementation("com.squareup.okhttp3:okhttp:4.12.0")
+implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+```
+
+### Manifest Permissions
+
+```xml
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+```
+
+<Note>
+  Only include `RECORD_AUDIO` if Android is capturing local microphone audio. Receive-only sessions that play remote audio without local capture do not need it.
+
+  Use `android:usesCleartextTraffic="true"` only for local `http://` development backends.
+</Note>
+
+---
+
+## PeerConnectionFactory
+
+Initialize WebRTC once per client lifecycle. Create one `EglBase` and one `PeerConnectionFactory` per session client:
+
+```kotlin
+private val eglBase: EglBase = EglBase.create()
+
+private fun createPeerConnectionFactory(): PeerConnectionFactory {
+    PeerConnectionFactory.initialize(
+        PeerConnectionFactory.InitializationOptions.builder(context)
+            .createInitializationOptions()
+    )
+
+    val encoderFactory = DefaultVideoEncoderFactory(
+        eglBase.eglBaseContext,
+        /* enableIntelVp8Encoder = */ true,
+        /* enableH264HighProfile = */ true
+    )
+    val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+
+    return PeerConnectionFactory.builder()
+        .setVideoEncoderFactory(encoderFactory)
+        .setVideoDecoderFactory(decoderFactory)
+        .createPeerConnectionFactory()
+}
+```
+
+If the session includes microphone capture or remote audio playback, add a Rokid-friendly `JavaAudioDeviceModule`:
+
+```kotlin
+val audioDeviceModule = JavaAudioDeviceModule.builder(context)
+    .setSampleRate(16_000)
+    .setUseHardwareAcousticEchoCanceler(false)
+    .setUseHardwareNoiseSuppressor(false)
+    .setUseStereoInput(false)
+    .setUseStereoOutput(false)
+    .setAudioAttributes(
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+    )
+    .setAudioSource(MediaRecorder.AudioSource.MIC)
+    .createAudioDeviceModule()
+
+// Then:
+PeerConnectionFactory.builder()
+    .setVideoEncoderFactory(encoderFactory)
+    .setVideoDecoderFactory(decoderFactory)
+    .setAudioDeviceModule(audioDeviceModule)
+    .createPeerConnectionFactory()
+```
+
+The `USAGE_MEDIA` route and disabled hardware AEC/NS avoid Rokid vendor VOIP-path issues during simultaneous capture and playback.
+
+---
+
+## Peer Connection Config
+
+Use Unified Plan semantics:
+
+```kotlin
+val config = PeerConnection.RTCConfiguration(iceServers).apply {
+    sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+}
+```
+
+Set offer constraints to match the session's real media needs. For a send-only video session with no remote audio:
+
+```kotlin
+val mediaConstraints = MediaConstraints().apply {
+    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "false"))
+    mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "false"))
+}
+```
+
+When Android should receive speech or other remote audio, set `OfferToReceiveAudio` to `"true"` and add a receive-only transceiver before creating the offer:
+
+```kotlin
+val init = RtpTransceiver.RtpTransceiverInit(
+    RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
+)
+val transceiver = peerConnection.addTransceiver(
+    MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+    init
+) ?: error("Failed to add receive-only audio transceiver")
+transceiver.receiver.track()?.setEnabled(true)
+```
+
+---
+
+## Video Capture
+
+### Camera2Enumerator
+
+Rokid Glasses have a single rear/outward camera. Enumerate available devices and create the first capturer:
+
+```kotlin
+private fun createCameraCapturer(): VideoCapturer? {
+    val enumerator = Camera2Enumerator(context)
+    for (name in enumerator.deviceNames) {
+        enumerator.createCapturer(name, null)?.let { return it }
+    }
+    return null
+}
+```
+
+### Capture at 15 fps, Output at 5 fps
+
+Rokid's camera HAL does not reliably advertise sub-15 fps modes. Start capture at 1024×768 @ 15 fps, then use `adaptOutputFormat` to limit what WebRTC sends to the backend:
+
+```kotlin
+val source = peerConnectionFactory.createVideoSource(videoCapturer.isScreencast).apply {
+    adaptOutputFormat(1024, 768, 5)
+}
+localVideoSource = source
+
+videoCapturer.initialize(surfaceTextureHelper, context, source.capturerObserver)
+videoCapturer.startCapture(1024, 768, 15)
+```
+
+### Prevent Quality Degradation
+
+Avoid WebRTC silently lowering sender quality under bandwidth pressure:
+
+```kotlin
+private fun configureVideoSender(sender: RtpSender?) {
+    val params = sender?.parameters ?: return
+    params.degradationPreference = RtpParameters.DegradationPreference.DISABLED
+    sender.parameters = params
+}
+```
+
+---
+
+## Audio Tracks
+
+For WebRTC microphone streaming, create an audio source and track, then add the track to the peer connection:
+
+```kotlin
+localAudioSource = peerConnectionFactory.createAudioSource(MediaConstraints())
+localAudioTrack = peerConnectionFactory.createAudioTrack("audio0", localAudioSource)
+localAudioTrack?.setEnabled(true)
+localAudioTrack?.let { peerConnection.addTrack(it) }
+```
+
+---
+
+## Offer and Answer Flow
+
+<Steps>
+  <Step title="Create local tracks and data channels">
+    Add all tracks and create all data channels **before** calling `createOffer`. The SDP must include every m-section the session needs.
+  </Step>
+  <Step title="Create the offer and wait for ICE">
+    GlassKit uses non-trickle signaling. Set the local description, then wait for ICE gathering to complete before sending anything to the backend.
+
+    ```kotlin
+    val offer = peerConnection.createOffer(sdpConstraints).await()
+    peerConnection.setLocalDescription(offer).await()
+    waitForIceGatheringComplete(peerConnection)
+    ```
+  </Step>
+  <Step title="POST the offer to your backend">
+    Send the complete local description SDP (not the initial offer SDP — it now includes ICE candidates):
+
+    ```kotlin
+    val answerSdp = postOfferToBackend(peerConnection.localDescription.description)
+    ```
+
+    Supported endpoint contracts:
+    - `Content-Type: application/sdp` — raw SDP in, raw SDP out.
+    - `Content-Type: application/json` — `{ "offer_sdp": "..." }` in, `{ "answer_sdp": "...", "session_id": "..." }` out.
+  </Step>
+  <Step title="Normalize and set the remote description">
+    Always normalize the SDP answer before calling `setRemoteDescription` to handle line-ending and escaping inconsistencies from JSON transport:
+
+    ```kotlin
+    private fun normalizeSdp(raw: String): String {
+        val text = raw.trim()
+            .replace("\\r\\n", "\n")
+            .replace("\\n", "\n")
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+
+        val lines = text
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        return if (lines.isEmpty()) "" else lines.joinToString("\r\n", postfix = "\r\n")
+    }
+
+    peerConnection.setRemoteDescription(
+        SessionDescription(SessionDescription.Type.ANSWER, normalizeSdp(answerSdp))
+    ).await()
+    ```
+
+    Validate before setting: the SDP answer must be non-empty and start with `v=`.
+  </Step>
+</Steps>
+
+<Tip>
+  Add a timeout of about 15 seconds for ICE gathering. Some upstream services accept partial candidates and prefer not to wait; fail fast and retry from a clean session rather than blocking the wearer indefinitely.
+</Tip>
+
+---
+
+## Data Channels
+
+Use data channels for application-level events (HUD state updates, session control, tool results). Use a stable string label per logical channel:
+
+```kotlin
+val dc = peerConnection.createDataChannel("vision-events", DataChannel.Init())
+```
+
+### Queuing Until Open
+
+The channel may not be immediately open when you want to send the first message. Queue outbound messages and flush on `OPEN`:
+
+```kotlin
+private fun sendJson(payload: JSONObject) {
+    val message = payload.toString()
+    val channel = dataChannel
+    if (channel != null && channel.state() == DataChannel.State.OPEN) {
+        channel.send(DataChannel.Buffer(ByteBuffer.wrap(message.toByteArray()), false))
+    } else {
+        pendingMessages.addLast(message)
+    }
+}
+```
+
+In the `DataChannel.Observer.onStateChange` callback:
+
+```kotlin
+override fun onStateChange() {
+    if (dataChannel?.state() == DataChannel.State.OPEN) {
+        while (pendingMessages.isNotEmpty()) {
+            val msg = pendingMessages.pollFirst() ?: break
+            dataChannel?.send(
+                DataChannel.Buffer(ByteBuffer.wrap(msg.toByteArray()), false)
+            )
+        }
+    }
+}
+```
+
+Use text JSON messages with a `type` field. Ignore unknown `type` values to stay forward-compatible as the backend evolves.
+
+---
+
+## ICE Servers
+
+For backends reachable on the same network or at a public WebRTC endpoint, a public STUN server is usually sufficient:
+
+```kotlin
+PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
+```
+
+For hosted media services that require TURN (e.g., behind symmetric NAT), fetch TURN URLs and credentials from your backend or the provider's session response. Do not hardcode TURN credentials in the Android app.
+
+---
+
+## Backend Patterns
+
+### Backend Media Receiver (Python / aiortc)
+
+Use `aiortc` for Python backends that terminate WebRTC and receive media tracks directly:
+
+```python
+@app.post("/vision/session")
+async def vision_session(request: Request) -> Response:
+    offer_sdp = (await request.body()).decode()
+    offer = RTCSessionDescription(sdp=offer_sdp, type="offer")
+
+    pc = RTCPeerConnection()
+    transceiver = pc.addTransceiver("video", direction="recvonly")
+    prefer_video_codec(transceiver, "video/H264")
+
+    @pc.on("track")
+    def on_track(track: MediaStreamTrack) -> None:
+        if track.kind == "video":
+            asyncio.create_task(vision_processor.consume(track))
+
+    @pc.on("datachannel")
+    def on_datachannel(channel: RTCDataChannel) -> None:
+        attach_app_events(channel)
+
+    await pc.setRemoteDescription(offer)
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    return Response(content=pc.localDescription.sdp, media_type="application/sdp")
+```
+
+<Note>
+  For CV inference, consume the latest available frame rather than queueing every frame. A growing stale-frame queue makes HUD state lag behind what the wearer is actually seeing.
+
+  Close peer connections on `failed`, `closed`, or `disconnected` state to avoid resource leaks.
+</Note>
+
+### Backend Service Broker (Python)
+
+For hosted media services, translate Android's offer into a provider session and return the provider's answer:
+
+```python
+@app.post("/vision/session")
+async def create_vision_session(
+    payload: VisionSessionCreateRequest
+) -> VisionSessionCreateResponse:
+    offer_sdp = payload.offer_sdp.strip()
+    if not offer_sdp:
+        raise HTTPException(status_code=422, detail="offer_sdp must not be empty")
+
+    upstream = await provider.create_stream(offer_sdp)
+    answer_sdp = normalize_sdp(upstream.answer_sdp)
+
+    if not answer_sdp.startswith("v="):
+        raise HTTPException(status_code=502, detail="provider returned invalid answer SDP")
+
+    session_id = store_session(upstream)
+    return VisionSessionCreateResponse(session_id=session_id, answer_sdp=answer_sdp)
+```
+
+If the provider emits results through its own WebSocket, relay normalized JSON to Android over your control WebSocket or data channel. Do not make Android parse raw provider-specific event envelopes.
+
+---
+
+## Lifecycle
+
+A WebRTC session client should be single-start and idempotent-stop:
+
+<Steps>
+  <Step title="Start">
+    Ignore duplicate `start()` calls while `peerConnection` is non-null. Proceed only from a clean state.
+  </Step>
+  <Step title="Stop">
+    Trigger stop on explicit user exit and on Android `onStop()`. Close event WebSockets before disposing the peer connection. Tell the backend to close its provider streams or media sessions.
+  </Step>
+  <Step title="Dispose in order">
+    1. Stop and dispose the video capturer.
+    2. Dispose `SurfaceTextureHelper`.
+    3. Dispose local tracks and sources.
+    4. Dispose `PeerConnectionFactory`.
+    5. Release `EglBase`.
+    6. Clear any queued data-channel messages.
+  </Step>
+</Steps>
+
+### Surface Connection State to the HUD
+
+Update the HUD to reflect the peer connection state so the wearer knows if media is live:
+
+| ICE state | HUD status |
+|---|---|
+| `NEW` / `CHECKING` | Starting… |
+| `CONNECTED` / `COMPLETED` | Live |
+| `DISCONNECTED` / `FAILED` | Connection lost — stop or retry |
+| `CLOSED` | Stopped |
+
+<Warning>
+  On `DISCONNECTED` or `FAILED`, stop the session and start fresh. Do not attempt to resume a broken peer connection by re-adding tracks or re-sending the offer on the same `PeerConnection` object.
+</Warning>

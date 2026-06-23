@@ -1,0 +1,84 @@
+---
+title: "GlassKit Examples: Runnable Rokid Glasses App Demos"
+sidebarTitle: "Overview"
+description: "GlassKit runnable examples for Rokid Glasses: feature demo, IKEA assistant, speedrun timer, scene reader, and drink coach with technologies for each."
+---
+
+GlassKit ships a growing set of runnable examples that each demonstrate a distinct slice of the smart-glasses development stack. Every example is a complete, self-contained project you can copy and adapt — Android app, backend, and configuration included. The sections below describe what each one does, what technologies it relies on, and which GlassKit building blocks it exercises.
+
+## Examples
+
+<CardGroup cols={2}>
+  <Card title="Rokid Feature Demo" icon="glasses" href="/examples/rokid-feature-demo">
+    **What it demonstrates:** Device-feature reference app for Rokid Glasses and emulator/phone testing. Covers touchpad navigation, offline Vosk voice commands, live camera preview, microphone level meter, and audio test tones.
+
+    **Technologies:** Kotlin, Vosk offline ASR, Android AudioRecord, AVD emulator.
+
+    **GlassKit building blocks:** `ScreenController` pattern, HUD viewport layout, touchpad + voice command input mapping, Vosk model setup.
+  </Card>
+  <Card title="IKEA Assembly Assistant" icon="screwdriver-wrench" href="/examples/rokid-openai-realtime">
+    **What it demonstrates:** Voice-first assembly assistant that streams mic and camera from the glasses to the OpenAI Realtime API via WebRTC. Set up with IKEA wooden box instructions out of the box.
+
+    **Technologies:** Kotlin, Node.js 24, OpenAI Realtime API, WebRTC, sideband WebSocket tool calls.
+
+    **GlassKit building blocks:** WebRTC audio + video streaming, OpenAI Realtime session brokering, sideband function calls, `SESSION_INSTRUCTIONS` customization.
+  </Card>
+  <Card title="Speedrun Timer (RF-DETR)" icon="timer" href="/examples/rokid-rfdetr">
+    **What it demonstrates:** Vision-driven speedrun HUD for physical tasks. RF-DETR detects configured objects and automatically advances HUD split timers with a two-hit confirmation rule. Includes a sushi speedrun out of the box.
+
+    **Technologies:** Kotlin, FastAPI, aiortc, RF-DETR, Roboflow `inference` library.
+
+    **GlassKit building blocks:** WebRTC video + data channel messaging, object detection inference loop, configurable speedrun state machine, annotated frame capture.
+  </Card>
+  <Card title="Live Scene Reader (Overshoot)" icon="eye" href="/examples/rokid-overshoot">
+    **What it demonstrates:** Minimal real-time scene reader that continuously describes what the wearer is looking at. Inference text streams to the HUD as a rolling, auto-scrolling log.
+
+    **Technologies:** Kotlin, FastAPI, Overshoot VLM API, WebRTC, WebSocket relay.
+
+    **GlassKit building blocks:** Overshoot stream lifecycle management, WebRTC brokering, HUD text rendering and auto-scroll, backend WebSocket relay.
+  </Card>
+  <Card title="Proactive Drink-making Coach" icon="martini-glass" href="/examples/rokid-overshoot-openai-realtime">
+    **What it demonstrates:** Full-stack AI assistant that scans ingredients, picks a recipe automatically, and guides each step with spoken instructions. Combines Overshoot visual inference, OpenAI Realtime speech, and a data-driven recipe workflow.
+
+    **Technologies:** Kotlin, FastAPI, Overshoot VLM API, OpenAI Realtime API, WebRTC (video + audio), sideband WebSocket.
+
+    **GlassKit building blocks:** Multi-connection session orchestration, Overshoot prompt switching, OpenAI sideband speech control, recipe JSON workflow, server-authoritative HUD state.
+  </Card>
+  <Card title="IKEA Assistant + RF-DETR Variant" icon="object-group" href="/examples/rokid-openai-realtime">
+    **What it demonstrates:** An updated version of the IKEA assembly assistant that adds RF-DETR object detection on the backend. Detected, annotated frames are injected into the Realtime API conversation for more accurate spatial understanding.
+
+    **Technologies:** Kotlin, Node.js, OpenAI Realtime API, RF-DETR, WebRTC.
+
+    **GlassKit building blocks:** All blocks from the base IKEA assistant, plus RF-DETR inference and annotated-frame injection into a Realtime session.
+
+    <Note>
+      This variant lives in `examples/rokid-openai-realtime-rfdetr` in the repository. It does not have a separate documentation page — see the [IKEA Assembly Assistant](/examples/rokid-openai-realtime) page and the `README.md` inside that directory for the full setup guide.
+    </Note>
+  </Card>
+</CardGroup>
+
+## Common Requirements
+
+Most examples share the same hardware and toolchain requirements. Each example README documents its exact steps and environment variables.
+
+| Requirement | Details |
+|---|---|
+| Rokid Glasses + dev cable | Required for on-device testing. See `docs/how-to-get-rokid-glasses.md`. |
+| Android Studio / `adb` | Required for all Android app builds and deployments. |
+| `uv` | Used for all Python backends (FastAPI examples). |
+| Node.js 24 | Used for the TypeScript backend in `rokid-openai-realtime`. |
+| `OPENAI_API_KEY` | Required by the OpenAI Realtime examples. |
+| `OVERSHOOT_API_KEY` | Required by the Overshoot examples. |
+| `ROBOFLOW_API_KEY` | Required by the RF-DETR examples (only for initial weight download). |
+
+## Copy an Example
+
+To copy any example and start building on top of it:
+
+```sh
+git clone https://github.com/RealComputer/GlassKit.git
+mkdir my-glasses-app
+git -C GlassKit archive HEAD:examples/rokid-feature-demo | tar -x -C my-glasses-app
+```
+
+Replace `rokid-feature-demo` with the name of any example directory.

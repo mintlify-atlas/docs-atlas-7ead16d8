@@ -1,0 +1,256 @@
+---
+title: "Object Detection with RF-DETR on Rokid Glasses"
+sidebarTitle: "Object Detection"
+description: "Stream Rokid camera video to a backend detector, normalize results into typed events, apply confirmation rules, and optionally augment a realtime model with annotated frames."
+---
+
+Object detection on Rokid Glasses is most useful when your app needs deterministic visual signals from the outward camera — object presence, class labels, bounding boxes, counters, completion triggers, or annotated frames for realtime model augmentation. This page covers the full pipeline: Android stream setup, backend receiver, frame policy, normalized results, decision logic, event contracts, annotated frames, and model augmentation.
+
+## Architecture
+
+The common object-detection shape is a five-step pipeline:
+
+<Steps>
+  <Step title="Android captures">
+    Android captures a low-rate outward-camera stream using a separate WebRTC session.
+  </Step>
+  <Step title="Android streams">
+    Android sends the video to a backend vision endpoint over WebRTC with a data channel for control events.
+  </Step>
+  <Step title="Backend runs detection">
+    The backend receives video, runs detection on the latest useful frame, and normalizes model output into app-owned structures.
+  </Step>
+  <Step title="Backend publishes events">
+    The backend publishes normalized app state and domain events to Android over the data channel or a control WebSocket.
+  </Step>
+  <Step title="Annotated JPEG stored">
+    The backend optionally saves the latest annotated JPEG for inspection, debugging, or realtime model image augmentation.
+  </Step>
+</Steps>
+
+<Note>
+  Android should not interpret raw model envelopes. It should consume normalized app state — status, detected classes, active task, counters — and let the backend own task progression.
+</Note>
+
+## Android Stream Setup
+
+Use a separate camera WebRTC session when detection is not the main realtime media path. Start with the lowest supported capture mode that still supports the detector — on Rokid, use `1024×768 @ 15 fps` capture and throttle detection or WebRTC output lower when needed.
+
+Create any data channel **before** the offer if detection events need to move over the same peer connection. Send explicit app events such as `session.start`, `run.start`, `debug.step`, or `workflow.confirm`, and queue client events until the channel or control socket is open.
+
+```kotlin
+// Create the vision events channel before building the offer
+val visionChannel = peerConnection.createDataChannel(
+    "vision-events",
+    DataChannel.Init()
+)
+```
+
+If the requested capture mode is not supported by the camera HAL, start with a supported mode and let WebRTC adapt the outgoing stream.
+
+## Backend Receiver
+
+Use `aiortc` for WebRTC termination in Python rather than hand-rolling SDP or media parsing. Keep the receiver thin: accept the media stream, hand frames to a vision processor, and publish normalized app events.
+
+```
+Receiver responsibilities:
+  - Accept WebRTC offer, negotiate codec (prefer H264 for Rokid)
+  - Hand decoded frames to the vision processor queue
+  - Publish normalized events back over the data channel
+  - Close peer connection on failed / closed / disconnected states
+```
+
+<Tip>
+  Prefer H264 when available — it is a practical codec choice for Rokid camera streaming and is well-supported by `aiortc`.
+</Tip>
+
+Keep session lifecycle, cleanup, and state broadcasting outside the detector model wrapper so the model can be swapped later. If the app supports only one active vision stream, close existing peer connections and clear channel/session state before accepting a new offer so stale detections cannot affect the next run.
+
+## Frame Policy
+
+Object detection should optimize freshness, not throughput. A camera-glasses app that reacts to stale frames feels wrong even when inference is accurate.
+
+<CardGroup cols={3}>
+  <Card title="Latest-Frame Buffer" icon="layer-group">
+    Keep only the newest frame while inference runs. Works well when the model is slower than the camera stream.
+  </Card>
+  <Card title="Minimum Interval" icon="clock">
+    Skip frames until `now - last_processed >= min_interval_s`. Simple and works well for image augmentation.
+  </Card>
+  <Card title="One In-Flight" icon="bolt">
+    If a frame is being processed, drop incoming frames instead of building a queue. Prevents memory and latency spikes.
+  </Card>
+</CardGroup>
+
+Run blocking model inference outside the event loop so media receiving and control messages stay responsive. Keep model objects warm and reused — repeated per-frame model loading will dominate latency and make the interaction unusable.
+
+## Normalized Results
+
+Normalize every detector into a small app-owned structure before any workflow or client code sees it:
+
+```python
+@dataclass(frozen=True)
+class Detection:
+    label: str
+    confidence: float | None
+    box_xyxy: tuple[float, float, float, float] | None = None
+
+
+@dataclass(frozen=True)
+class DetectionSnapshot:
+    detections: list[Detection]
+    classes: set[str]
+    image_size: tuple[int, int] | None
+    timestamp: float
+    annotated_jpeg: bytes | None = None
+```
+
+Keep these rules when building your normalization layer:
+
+- Map provider labels to domain labels on the backend.
+- Include confidence and timestamp if downstream logic needs stability checks.
+- Make the bounding-box convention explicit. `box_xyxy` means left, top, right, bottom in source-image pixels; use a `_norm` suffix or a `coordinate_space` field for normalized boxes.
+- Prefer a list of detection objects over parallel `labels`, `boxes`, and `confidences` arrays.
+- Keep raw predictions available only in logs or debug traces.
+- Use stable event types and field names. Android should ignore unknown fields but should not need provider-specific parsing.
+
+## Model Backend Choices
+
+<CardGroup cols={3}>
+  <Card title="Fine-Tuned Detector" icon="crosshairs">
+    Best for a known set of physical objects, parts, states, or completion markers. RF-DETR is a good concrete example.
+  </Card>
+  <Card title="Open-Vocabulary Detector" icon="magnifying-glass">
+    Useful during prototyping. Stabilize labels before wiring completion rules to them.
+  </Card>
+  <Card title="Hosted Detector Service" icon="cloud">
+    Fastest to prototype. Normalize results and hide vendor auth from Android.
+  </Card>
+</CardGroup>
+
+## Decision Logic
+
+Do not let a single detection immediately mutate important user-visible state unless the workflow truly tolerates false positives. Add a confirmation rule between normalized detections and app state.
+
+### Two-Hit Rule
+
+A two-hit rule works well for simple glasses demos:
+
+```python
+if target_class in snapshot.classes:
+    consecutive_hits += 1
+else:
+    consecutive_hits = 0
+
+if consecutive_hits >= 2:
+    complete_current_step()
+```
+
+### Other Useful Rules
+
+- **Presence over time** — require a class to appear for N frames or M milliseconds.
+- **Rising edge count** — count false-to-true transitions, useful for repeated actions.
+- **Best-confidence match** — choose the highest-confidence object among allowed labels.
+- **Region rule** — require the object box to be inside a known image region.
+- **Generation match** — ignore detector results from an old task generation after the backend switches tasks.
+
+<Warning>
+  For multi-step workflows, the backend should own the active detector, completion criteria, client-visible state, and workflow speech. Android should not infer progression from local timers, transcripts, or raw detections.
+</Warning>
+
+## Event Contracts
+
+### Backend → Android
+
+| Event type | Purpose |
+|---|---|
+| `config` | Detector labels, workflow steps, or task metadata |
+| `state` | Normalized status, active task, counters, latest detection summary |
+| `detection` | Optional debug-only detection snapshot |
+| Domain event (e.g. `task.completed`) | Workflow transitions |
+
+Example `state` event:
+
+```json
+{
+  "type": "state",
+  "status": "running",
+  "detected_classes": ["cup", "plate"],
+  "active_task_id": "find-cup",
+  "completed_count": 2
+}
+```
+
+### Android → Backend
+
+| Event type | Purpose |
+|---|---|
+| `session.start` / `run.start` | Begin a detection session or run |
+| `debug.step` | Manual step with a direction or target id |
+| `workflow.confirm` | Explicit user confirmation |
+| `session.stop` | App exit |
+
+Use a control WebSocket instead of a data channel when multiple backend services share one session state, when events must outlive one media peer connection, or when the backend owns long-lived workflow state.
+
+## Annotated Frames
+
+Annotated frames are useful for debugging, model tuning, and realtime model augmentation. Use `supervision`, OpenCV, PIL, or the detector library's own helpers to draw boxes and labels.
+
+Save:
+
+- `latest.jpg` — for quick inspection and downstream image augmentation.
+- A bounded timestamped history — when debugging regressions.
+
+Keep storage bounded with a history limit. A JPEG quality around 85 is a practical default for readable annotations without excessive payload size.
+
+## Realtime Model Augmentation
+
+Object detection can provide either structured context or the latest annotated image to a realtime model:
+
+- Use structured text when labels, counts, or state are enough.
+- Use an annotated `input_image` when spatial layout, part appearance, or visual ambiguity matters.
+
+Convert the latest annotated JPEG to a data URI:
+
+```python
+data_uri = "data:image/jpeg;base64," + base64.b64encode(jpeg_bytes).decode("ascii")
+```
+
+Insert the image after the realtime session has committed the user's audio turn, then request exactly one model response. Do not inject images on every event or replay a backlog.
+
+```python
+await realtime_session.add_user_image(
+    image_url=data_uri,
+    after_turn_id=user_audio_turn_id,
+    detail="high",
+)
+await realtime_session.create_response()
+```
+
+See the [OpenAI Realtime guide](/guides/openai-realtime) for the concrete event sequence that avoids duplicate image injection using `pending_turns` and `sent_images` gates.
+
+## Training and Tuning Loop
+
+Train and evaluate from the glasses point of view. Record representative Rokid camera footage including bad lighting, hand occlusion, motion blur, partial objects, and the distances users actually work at.
+
+<Steps>
+  <Step title="Start small">
+    Begin with a small label set that maps directly to app decisions.
+  </Step>
+  <Step title="Capture history">
+    Capture annotated frame history while using the app.
+  </Step>
+  <Step title="Review errors">
+    Review false positives and missed detections from `latest.jpg` plus history frames.
+  </Step>
+  <Step title="Adjust labels and rules">
+    Adjust labels, thresholds, and confirmation rules before changing client or workflow logic.
+  </Step>
+  <Step title="Add debug controls">
+    Add manual debug controls so the app remains testable when the detector is wrong.
+  </Step>
+</Steps>
+
+<Warning>
+  Keep labels stable once workflow rules depend on them. Renaming a label breaks every completion rule that references it.
+</Warning>

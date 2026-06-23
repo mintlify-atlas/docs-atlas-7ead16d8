@@ -1,0 +1,193 @@
+---
+title: "Offline Voice Commands with Vosk on Rokid Glasses"
+sidebarTitle: "Voice Commands"
+description: "Add offline, fixed-phrase voice recognition to your Rokid Glasses app using Vosk for select, back, next, and previous commands without a network connection."
+---
+
+Vosk is an offline speech recognition library that runs entirely on-device — no network call, no API key, and no latency from a round trip to a cloud service. This page covers build setup, model bundling, recognizer configuration, the audio loop, JSON parsing, and lifecycle management for a fixed-phrase command set that mirrors the Rokid touchpad: `select`, `back`, `next`, and `previous`.
+
+## Build Dependencies
+
+Add the Vosk and JNA artifacts to your app module and configure the ABI filters:
+
+```kotlin
+// app/build.gradle.kts
+defaultConfig {
+    ndk {
+        abiFilters += listOf("arm64-v8a", "x86_64")
+    }
+}
+
+dependencies {
+    implementation("com.alphacephei:vosk-android:0.3.75@aar")
+    implementation("net.java.dev.jna:jna:5.18.1@aar")
+}
+```
+
+<Warning>
+  Keep the Vosk and JNA dependencies as inline strings with the `@aar` qualifier. Gradle version catalogs strip the `@aar` qualifier and can pull duplicate JNA classes, causing runtime crashes.
+</Warning>
+
+Add `android.permission.RECORD_AUDIO` to the manifest and request it at runtime before opening `AudioRecord`.
+
+## Model Setup
+
+Bundle the English small model at `app/src/main/assets/model-en-us/`. Use the download script below to pull and stage the model:
+
+```sh
+ASSET_DIR=app/src/main/assets
+curl -L -o /tmp/vosk-model-small-en-us-0.15.zip \
+  https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+unzip -q /tmp/vosk-model-small-en-us-0.15.zip -d /tmp
+rm -rf "$ASSET_DIR/model-en-us"
+mkdir -p "$ASSET_DIR"
+mv /tmp/vosk-model-small-en-us-0.15 "$ASSET_DIR/model-en-us"
+printf 'en-us-small-0.15-v1\n' > "$ASSET_DIR/model-en-us/uuid"
+```
+
+Load the bundled model through Vosk's Android storage helper:
+
+```kotlin
+StorageService.unpack(
+    context.applicationContext,
+    "model-en-us",
+    "model",
+    { model -> /* create Recognizer */ },
+    { exception -> /* report init failure */ }
+)
+```
+
+<Tip>
+  Check `context.assets.list("model-en-us")` before calling `StorageService.unpack` so a missing model produces a useful runtime error rather than a cryptic JNI crash.
+</Tip>
+
+## Recognizer Setup
+
+Configure the recognizer with a fixed grammar — only the four command words plus `[unk]` for anything out-of-grammar:
+
+```kotlin
+private const val SAMPLE_RATE_HZ = 16_000
+
+val commands = linkedSetOf("select", "back", "next", "previous")
+val grammarJson = JSONArray().apply {
+    commands.forEach { put(it) }
+    put("[unk]")
+}.toString()
+
+val recognizer = Recognizer(model, SAMPLE_RATE_HZ.toFloat(), grammarJson).apply {
+    setWords(false)
+    setPartialWords(false)
+    setEndpointerDelays(5.0f, 0.25f, 3.0f)
+}
+```
+
+The endpoint delays above bias command recognition toward short utterances: tolerate startup silence, finalize quickly after trailing silence, and cap utterances at three seconds.
+
+<Note>
+  Always include `[unk]` in the grammar so out-of-grammar speech does not force a false command match. Without it, Vosk will pick the closest in-vocabulary word even when the user said something unrelated.
+</Note>
+
+Normalize configured commands and recognized text with `trim().lowercase(Locale.US)` to ensure consistent matching.
+
+## Audio Loop
+
+Feed the recognizer 16 kHz mono PCM16 from a dedicated worker thread. Use **sample counts, not byte counts**, when passing a `ShortArray` to `acceptWaveForm`.
+
+```kotlin
+val minBufferBytes = AudioRecord.getMinBufferSize(
+    SAMPLE_RATE_HZ,
+    AudioFormat.CHANNEL_IN_MONO,
+    AudioFormat.ENCODING_PCM_16BIT
+)
+require(minBufferBytes > 0)
+
+val record = AudioRecord(
+    MediaRecorder.AudioSource.MIC,
+    SAMPLE_RATE_HZ,
+    AudioFormat.CHANNEL_IN_MONO,
+    AudioFormat.ENCODING_PCM_16BIT,
+    maxOf(minBufferBytes, SAMPLE_RATE_HZ * 200 / 1000 * 2)
+)
+
+check(record.state == AudioRecord.STATE_INITIALIZED)
+record.startRecording()
+check(record.recordingState == AudioRecord.RECORDSTATE_RECORDING)
+
+Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
+val buffer = ShortArray(SAMPLE_RATE_HZ * 50 / 1000)
+
+while (!stopRequested) {
+    val readCount = record.read(buffer, 0, buffer.size)
+    if (readCount < 0) {
+        reportAudioReadFailure(readCount)
+        return
+    }
+    if (readCount == 0) continue
+
+    if (recognizer.acceptWaveForm(buffer, readCount)) {
+        publishPartial("")
+        dispatchResult(recognizer.getResult())
+    } else {
+        publishPartial(partialText(recognizer.getPartialResult()))
+    }
+}
+
+if (!stopRequested) {
+    publishPartial("")
+    dispatchResult(recognizer.getFinalResult())
+}
+```
+
+## Parsing Vosk JSON
+
+Final results use the `"text"` key and partial results use the `"partial"` key:
+
+```kotlin
+fun resultText(resultJson: String) = JSONObject(resultJson)
+    .optString("text", "")
+    .trim()
+    .lowercase(Locale.US)
+
+fun partialText(partialJson: String) = JSONObject(partialJson)
+    .optString("partial", "")
+    .trim()
+    .lowercase(Locale.US)
+
+val text = resultText(resultJson)
+if (text in commands) {
+    onCommand(text)
+}
+```
+
+<Warning>
+  Callbacks from the recognition thread must hop to the main thread before touching Android views. Use `Handler(Looper.getMainLooper()).post { ... }` or a coroutine dispatcher.
+</Warning>
+
+## Lifecycle
+
+<Steps>
+  <Step title="Start after prerequisites are met">
+    Start the audio loop only after the model is fully unpacked by `StorageService` **and** `RECORD_AUDIO` permission is granted. Starting earlier will fail silently or crash.
+  </Step>
+  <Step title="Reset before each session">
+    Call `recognizer.reset()` before each new listening session to clear internal state from the previous run.
+  </Step>
+  <Step title="Stop cleanly">
+    On stop: set the stop flag, stop `AudioRecord`, briefly interrupt/join the worker thread, release `AudioRecord`, clear partial UI state, and reset any audio meter to zero.
+  </Step>
+  <Step title="Suppress duplicates">
+    Suppress duplicate final commands within a ~400 ms window because endpointing can produce repeated finals for a single utterance.
+  </Step>
+  <Step title="Release on destroy">
+    On destroy, close `Recognizer` and `Model` to release the JNI resources.
+  </Step>
+</Steps>
+
+Surface actionable errors for these conditions:
+
+- Missing model asset or unpack failure
+- Missing `RECORD_AUDIO` permission
+- Invalid buffer size (`minBufferBytes <= 0`)
+- `AudioRecord` init or start failure
+- Negative read count from `AudioRecord.read`
+- Runtime exceptions in the recognition loop
